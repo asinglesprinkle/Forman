@@ -38,13 +38,21 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Get a Linear API key from [linear.app/settings/api](https://linear.app/settings/api)
-and drop it somewhere Foreman looks:
+Then set up your Linear credentials:
 
 ```sh
-mkdir -p ~/.config/foreman
-echo 'LINEAR_API_KEY=lin_api_xxxxx' > ~/.config/foreman/.env
+foreman init
 ```
+
+It asks for a personal API key (get one at
+[linear.app/settings/api](https://linear.app/settings/api)), checks it against
+the API before saving anything, picks a team if you have more than one, and
+tells you whether your board has a workflow state it can use for the review
+gate. Input is hidden, and the file it writes is `0600`.
+
+It saves to `~/.config/foreman/.env` on purpose. Your API key belongs to *you*,
+but Foreman runs inside whichever repo you point it at, so a key saved in one
+repo is invisible from every other one.
 
 ## Quick start
 
@@ -52,16 +60,16 @@ Run it from **inside the repo you want it to work on**. The current directory is
 the codebase; more than one board just means more than one directory.
 
 ```sh
-foreman doctor                    # read-only: prove the key works
+foreman doctor                    # read-only: what can Foreman see?
 foreman push "describe a problem" # file a ticket
 foreman pull                      # work the next ready ticket
 foreman pull --ticket ABC-42      # or work a specific one
 foreman status                    # what Foreman has in flight here
 ```
 
-`doctor` is worth running first. It prints who you authenticated as, your teams
-and workflow states, which state it will use for the gate, and the tickets
-currently assigned to you.
+`doctor` is the one to reach for when something looks wrong. It prints who you
+authenticated as, your teams and workflow states, which state it will use for
+the gate, and the tickets currently assigned to you.
 
 ## What a run actually does
 

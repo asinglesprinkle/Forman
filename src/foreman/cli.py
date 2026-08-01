@@ -15,7 +15,18 @@ import sys
 from pathlib import Path
 
 from . import git_ops
-from .config import MissingApiKey, load_settings
+from .config import (
+    API_KEY_VAR,
+    ENV_FILE,
+    REVIEW_STATE_VAR,
+    TEAM_KEY_VAR,
+    USER_VAR,
+    MissingApiKey,
+    load_settings,
+    mask,
+    user_config_dir,
+    write_user_env,
+)
 from .decompose import decompose as decompose_ticket
 from .linear_client import LinearClient, McpLinearClient, StubLinearClient, stub_path
 from .linear_graphql import GraphQLLinearClient, LinearApiError
@@ -204,6 +215,134 @@ def cmd_push(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ask(question: str, default: str = "") -> str:
+    suffix = f" [{default}]" if default else ""
+    answer = input(f"{question}{suffix}: ").strip()
+    return answer or default
+
+
+def _confirm(question: str, default: bool = True) -> bool:
+    hint = "Y/n" if default else "y/N"
+    answer = input(f"{question} [{hint}]: ").strip().lower()
+    return default if not answer else answer.startswith("y")
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """Walk someone through setting up credentials, and prove they work.
+
+    Writes the per-user config rather than a per-repo one, because the key
+    belongs to a person while the tool runs inside whichever repo you point it
+    at. A key in one repo's .env is invisible from every other repo.
+    """
+    import getpass
+
+    target = user_config_dir() / ENV_FILE
+    existing = load_settings(None)
+
+    print("Foreman setup")
+    print(f"Writing to {target}\n")
+
+    if target.is_file() and not args.force:
+        print(f"{target} already exists.")
+        if not sys.stdin.isatty() or not _confirm("Overwrite it?", default=False):
+            print("Nothing changed. Re-run with --force to overwrite.")
+            return 0
+        print()
+
+    # -- key ----------------------------------------------------------------
+
+    key = existing.api_key
+    if key:
+        print(f"Found an existing key ({mask(key)}).")
+        if sys.stdin.isatty() and not _confirm("Keep using it?", default=True):
+            key = None
+        print()
+
+    if not key:
+        if not sys.stdin.isatty():
+            sys.stdout.flush()
+            print(
+                "No API key, and nothing to prompt with. Get one at "
+                "https://linear.app/settings/api and either export "
+                f"{API_KEY_VAR} or write it to {target}.",
+                file=sys.stderr,
+            )
+            return 2
+        print("Get a personal API key: https://linear.app/settings/api")
+        print("(Personal API keys, then Create key. It is shown only once.)")
+        # getpass so the key never echoes and never lands in shell history.
+        key = getpass.getpass("Paste it here (input hidden): ").strip()
+        if not key:
+            sys.stdout.flush()
+            print("No key given, nothing written.", file=sys.stderr)
+            return 2
+        print()
+
+    # -- verify -------------------------------------------------------------
+
+    print("Checking the key against Linear...")
+    client = GraphQLLinearClient(api_key=key)
+    try:
+        viewer = client.viewer()
+        teams = client.teams()
+    except LinearApiError as exc:
+        sys.stdout.flush()
+        print(f"\nThat key did not work: {exc}", file=sys.stderr)
+        print("Nothing written. Run `foreman init` again to retry.", file=sys.stderr)
+        return 1
+    print(f"  authenticated as {viewer.get('email') or viewer.get('name')}\n")
+
+    values = {API_KEY_VAR: key}
+
+    # -- team ---------------------------------------------------------------
+
+    keys = [t["key"] for t in teams]
+    if len(teams) == 1:
+        print(f"One team visible ({keys[0]}), so no team setting needed.\n")
+        team_key = keys[0]
+    else:
+        print(f"Teams visible: {', '.join(keys)}")
+        print("Foreman needs one to create issues on with `foreman push`.")
+        team_key = existing.team_key or keys[0]
+        if sys.stdin.isatty():
+            team_key = _ask("Which team key", default=team_key)
+        values[TEAM_KEY_VAR] = team_key
+        print()
+
+    # -- review state -------------------------------------------------------
+
+    client.team_key = team_key
+    try:
+        state = client.find_state(team_key, "in_review")
+        print(f"Gate state: tickets will move to '{state['name']}' when a PR opens.\n")
+    except LinearApiError:
+        names = [s["name"] for s in client.team(team_key)["states"]["nodes"]]
+        print(f"Team {team_key} has no state that looks like 'in review'.")
+        print(f"  states: {', '.join(names)}")
+        print(
+            "Foreman still opens the PR and comments the link; it just cannot\n"
+            "move the ticket. Add an 'In Review' state under the Started group\n"
+            "in Linear, or name an existing state to use instead."
+        )
+        if sys.stdin.isatty():
+            chosen = _ask("Use which state (blank to skip)", default="")
+            if chosen:
+                values[REVIEW_STATE_VAR] = chosen
+        print()
+
+    # -- write --------------------------------------------------------------
+
+    if existing.user:
+        values[USER_VAR] = existing.user
+
+    written = write_user_env(values, target)
+    print(f"Wrote {written} (permissions 0600)\n")
+    print("Next:")
+    print("  foreman doctor                  # confirm what Foreman can see")
+    print("  cd <your repo> && foreman pull  # work your next ticket")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Prove the API key works and show what Foreman can actually see.
 
@@ -299,6 +438,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="show foreman state in this repo")
     p_status.set_defaults(func=cmd_status)
+
+    p_init = sub.add_parser(
+        "init", help="set up your Linear credentials and check they work"
+    )
+    p_init.add_argument(
+        "--force", action="store_true", help="overwrite an existing config without asking"
+    )
+    p_init.set_defaults(func=cmd_init)
 
     p_doctor = sub.add_parser(
         "doctor", help="check the Linear API key and show what Foreman can see"

@@ -111,6 +111,40 @@ class Settings:
         return self.api_key
 
 
+def mask(secret: str) -> str:
+    """Show enough of a key to recognise it, never enough to use it."""
+    if len(secret) <= 12:
+        return "*" * len(secret)
+    return f"{secret[:8]}...{secret[-4:]}"
+
+
+def render_env(values: dict[str, str]) -> str:
+    """Render a .env file. Only known variables, only non-empty ones."""
+    lines = [
+        "# Written by `foreman init`. Safe to edit by hand.",
+        "# Docs: https://linear.app/settings/api for the API key.",
+        "",
+    ]
+    for var in (API_KEY_VAR, TEAM_KEY_VAR, REVIEW_STATE_VAR, USER_VAR):
+        value = values.get(var)
+        if value:
+            lines.append(f"{var}={value}")
+    return "\n".join(lines) + "\n"
+
+
+def write_user_env(values: dict[str, str], path: str | Path | None = None) -> Path:
+    """Write the per-user .env, readable only by its owner.
+
+    0600 matters: this file holds a credential that can read and modify every
+    issue the key's owner can see.
+    """
+    target = Path(path) if path else user_config_dir() / ENV_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_env(values), encoding="utf-8")
+    target.chmod(0o600)
+    return target
+
+
 def load_settings(repo_root: str | Path | None = None) -> Settings:
     values = load_env(repo_root)
     return Settings(
