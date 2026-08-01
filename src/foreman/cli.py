@@ -422,6 +422,60 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Clear a halted run so `foreman pull` will pick it back up.
+
+    The loop never resets a failed or blocked sub-task by itself: both mean a
+    human has to look at something. This command is that human saying they
+    have, and it only ever moves work backwards to pending, never forwards.
+    """
+    from .state import reset_for_resume
+
+    repo = resolve_repo(args.repo)
+    store = StateStore(repo)
+
+    if not store.exists(args.ticket):
+        known = ", ".join(store.tickets()) or "(none)"
+        print(
+            f"no foreman state for {args.ticket} in this repo. Known: {known}",
+            file=sys.stderr,
+        )
+        return 2
+
+    state = store.load(args.ticket)
+    changed = reset_for_resume(state, include_blocked=not args.failed_only)
+
+    if not changed:
+        done = len(state.done_ids())
+        print(f"{args.ticket}: nothing to reset ({done}/{len(state.subtasks)} done).")
+        if state.all_done():
+            print("Everything finished. Run `foreman pull` to open the PR.")
+        return 0
+
+    store.save(state)
+    for subtask_id, was in changed:
+        print(f"  {subtask_id}: {was} -> pending")
+    print(f"\n{args.ticket}: {len(changed)} sub-task(s) reset. Work already done is kept.")
+
+    status = git_ops.worktree_status(repo)
+    if not status.clean:
+        print(
+            "\nThe working tree is dirty, so `foreman pull` will refuse to start:",
+            file=sys.stderr,
+        )
+        for path in status.files[:10]:
+            print(f"  {path}", file=sys.stderr)
+        print(
+            "\nA halted sub-task often leaves useful partial work. Read it, then "
+            "either commit it or discard it before resuming.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"\nNext:  foreman pull --ticket {args.ticket}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     repo = resolve_repo(args.repo)
     store = StateStore(repo)
@@ -483,6 +537,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="overwrite an existing config without asking"
     )
     p_init.set_defaults(func=cmd_init)
+
+    p_resume = sub.add_parser(
+        "resume", help="reset a halted ticket's failed/blocked sub-tasks to pending"
+    )
+    p_resume.add_argument("ticket", help="ticket identifier, e.g. TEAM-42")
+    p_resume.add_argument(
+        "--failed-only",
+        action="store_true",
+        help="reset only failed sub-tasks, leaving blocked ones alone",
+    )
+    p_resume.set_defaults(func=cmd_resume)
 
     p_doctor = sub.add_parser(
         "doctor", help="check the Linear API key and show what Foreman can see"

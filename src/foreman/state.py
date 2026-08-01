@@ -186,6 +186,33 @@ def render_manifest(state: TicketState) -> str:
 # -- queries the orchestrator needs -----------------------------------------
 
 
+def reset_for_resume(
+    state: TicketState, include_blocked: bool = True
+) -> list[tuple[str, str]]:
+    """Put failed (and by default blocked) sub-tasks back to pending.
+
+    Nothing in the loop does this on its own, and that is deliberate: a failed
+    or blocked sub-task means a human has to look. Resuming is that human
+    saying they have looked. Returns what changed, so the caller can report it.
+
+    Done sub-tasks are never touched, which is what makes a re-run skip work
+    that already succeeded.
+    """
+    wanted = {SubTaskStatus.FAILED.value}
+    if include_blocked:
+        wanted.add(SubTaskStatus.BLOCKED.value)
+
+    changed: list[tuple[str, str]] = []
+    for st in state.subtasks:
+        if st.status in wanted:
+            changed.append((st.id, st.status))
+            st.status = SubTaskStatus.PENDING.value
+            st.blocked_reason = None
+            st.started_at = None
+            st.finished_at = None
+    return changed
+
+
 def next_ready_subtask(state: TicketState) -> SubTask | None:
     """The next pending sub-task whose dependencies are all done.
 

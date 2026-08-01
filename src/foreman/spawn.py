@@ -301,6 +301,40 @@ def extract_last_json(text: str) -> dict | None:
     return found[-1] if found else None
 
 
+# Failures that an immediate retry cannot fix. A usage limit does not clear in
+# the seconds between two attempts, and a bad credential never clears on its
+# own, so retrying either one only spends the second attempt to learn nothing.
+_PERMANENT_FAILURE_MARKERS = (
+    "usage limit",
+    "rate limit",
+    "rate_limit",
+    "ratelimit",
+    "quota",
+    "429",
+    "limit reached",
+    "too many requests",
+    "insufficient credit",
+    "credit balance",
+    "authentication",
+    "unauthorized",
+    "invalid api key",
+    "permission denied",
+)
+
+
+def is_retryable(error: str | None) -> bool:
+    """Whether trying the exact same thing again could plausibly work.
+
+    Pattern matching on error text is crude, and it only catches failures that
+    describe themselves. An SDK error that says nothing useful still gets a
+    retry, which is the safe direction to be wrong in.
+    """
+    if not error:
+        return True
+    lowered = error.lower()
+    return not any(marker in lowered for marker in _PERMANENT_FAILURE_MARKERS)
+
+
 def result_from_run(run: AgentRun) -> SpawnResult:
     """Turn a raw session into a pipeline outcome.
 
@@ -316,7 +350,12 @@ def result_from_run(run: AgentRun) -> SpawnResult:
         "raw": run.text or None,
     }
     if run.error:
-        return SpawnResult(status=SubTaskStatus.FAILED.value, error=run.error, **meta)
+        return SpawnResult(
+            status=SubTaskStatus.FAILED.value,
+            error=run.error,
+            retryable=is_retryable(run.error),
+            **meta,
+        )
     if run.turn_limit_hit:
         return SpawnResult(
             status=SubTaskStatus.FAILED.value,
@@ -346,10 +385,12 @@ def result_from_run(run: AgentRun) -> SpawnResult:
             **meta,
         )
     if status == SubTaskStatus.FAILED.value:
+        error = str(reason or summary or "agent reported failure")
         return SpawnResult(
             status=status,
             summary=summary,
-            error=str(reason or summary or "agent reported failure"),
+            error=error,
+            retryable=is_retryable(error),
             **meta,
         )
     return SpawnResult(
