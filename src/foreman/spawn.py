@@ -63,7 +63,6 @@ class AgentRunner(Protocol):
         allowed_tools: list[str] | None = ...,
         max_turns: int = ...,
         model: str | None = ...,
-        mcp_servers: dict[str, Any] | None = ...,
     ) -> AgentRun: ...
 
 
@@ -78,7 +77,6 @@ def run_agent(
     allowed_tools: list[str] | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     model: str | None = DEFAULT_MODEL,
-    mcp_servers: dict[str, Any] | None = None,
 ) -> AgentRun:
     """Run one fresh Claude Agent SDK session and collect its output.
 
@@ -102,7 +100,6 @@ def run_agent(
         max_turns=max_turns,
         cwd=str(cwd),
         model=model,
-        **({"mcp_servers": mcp_servers} if mcp_servers else {}),
     )
 
     async def _collect() -> AgentRun:
@@ -134,6 +131,83 @@ def run_agent(
         return run
 
     return asyncio.run(_collect())
+
+
+# -- multi-turn --------------------------------------------------------------
+
+
+def run_conversation(
+    *,
+    system_prompt: str,
+    opening: str,
+    respond: Callable[[str], str | None],
+    cwd: str | Path,
+    allowed_tools: list[str] | None = None,
+    max_rounds: int = 6,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    model: str | None = DEFAULT_MODEL,
+) -> AgentRun:
+    """Hold one multi-turn conversation and return its final message.
+
+    The only stateful agent usage in the codebase. Everything else is one-shot
+    on purpose; this exists because writing a good ticket is a dialogue, and the
+    ticket is the last thing a human sees before the pipeline runs unsupervised.
+
+    `respond` receives each agent message and returns the human's reply, or None
+    to end the conversation. Keeping that a callback is what lets the whole
+    thing be tested with canned answers and no SDK.
+    """
+    try:
+        from claude_agent_sdk import (  # type: ignore[import-not-found]
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ClaudeSDKClient,
+            TextBlock,
+        )
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        return AgentRun(error=f"claude-agent-sdk is not installed: {exc}")
+
+    options = ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        allowed_tools=list(allowed_tools or ["Read", "Grep", "Glob"]),
+        permission_mode="acceptEdits",
+        max_turns=max_turns,
+        cwd=str(cwd),
+        model=model,
+    )
+
+    async def _talk() -> AgentRun:
+        run = AgentRun()
+        text = ""
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(opening)
+                for _ in range(max_rounds):
+                    chunks: list[str] = []
+                    async for message in client.receive_response():
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    chunks.append(block.text)
+                            continue
+                        for attr in ("session_id", "total_cost_usd"):
+                            value = getattr(message, attr, None)
+                            if value is not None:
+                                setattr(run, attr, value)
+                    text = "\n".join(chunks).strip()
+
+                    reply = respond(text)
+                    if reply is None:
+                        break
+                    await client.query(reply)
+                else:
+                    run.turn_limit_hit = True
+        except Exception as exc:
+            run.error = f"{type(exc).__name__}: {exc}"
+        run.text = text
+        return run
+
+    return asyncio.run(_talk())
 
 
 # -- prompt building and result parsing (pure) -------------------------------

@@ -16,21 +16,20 @@ from typing import Callable
 
 from .linear_client import LinearClient
 from .models import Ticket
-from .spawn import DEFAULT_MODEL, AgentRun, extract_last_json, run_agent
+from .spawn import (
+    DEFAULT_MODEL,
+    AgentRun,
+    extract_last_json,
+    run_agent,
+    run_conversation,
+)
 from .topo import CycleError, topo_sort
 
 PUSH_MAX_TURNS = 20
 
-PUSH_CONTRACT = """\
-You turn a person's prose description of an issue into one or more Linear \
-tickets. You may read the repository you are in to ground the ticket in real \
-paths and names. Do not write or edit any code.
+MAX_QUESTION_ROUNDS = 3
 
-Splitting rule: create separate tickets when the concerns are independently \
-shippable. Otherwise create one. Do not invent work the person did not describe.
-Whenever ordering matters, populate blocked_by and blocks using the 1-based \
-index of another ticket in your own list.
-
+_TICKET_JSON_SHAPE = """\
 Emit as your final message a single JSON object and nothing else:
 {"tickets": [{
   "title": "imperative, under 80 chars",
@@ -48,6 +47,64 @@ Emit as your final message a single JSON object and nothing else:
 Every field is required except project, which may be null. Acceptance criteria \
 must be observable: something a person could check without reading your mind.\
 """
+
+_SPLIT_RULE = """\
+Splitting rule: create separate tickets when the concerns are independently \
+shippable. Otherwise create one. Do not invent work the person did not describe. \
+Whenever ordering matters, populate blocked_by and blocks using the 1-based \
+index of another ticket in your own list.\
+"""
+
+# One shot, no questions possible. Used for --yes and for non-interactive stdin.
+PUSH_CONTRACT = f"""\
+You turn a person's prose description of an issue into one or more Linear \
+tickets. You may read the repository you are in to ground the ticket in real \
+paths and names. Do not write or edit any code.
+
+{_SPLIT_RULE}
+
+{_TICKET_JSON_SHAPE}"""
+
+# Interactive. The questions are the point: this ticket will be executed by
+# agents with no supervision, so an ambiguity left here does not produce a vague
+# pull request, it produces a confidently wrong one several sessions later.
+PUSH_CONVERSATION_CONTRACT = f"""\
+You are helping someone file a Linear ticket that an autonomous pipeline will \
+later execute WITHOUT supervision. A later agent will read only this ticket, \
+split it into sub-tasks, and write code against it. Your job is to end up with a \
+ticket that can actually be executed on its own.
+
+Before drafting, check whether you have these five things. They are what the \
+pipeline needs in order to work, and nothing outside this list justifies a \
+question:
+
+1. The problem. What is broken or missing, and why it matters.
+2. Acceptance criteria. Observable outcomes someone could check without reading \
+the author's mind. This is what "done" will be measured against.
+3. Where to look. Files, modules, endpoints, prior tickets the executor needs.
+4. Out of scope. What must NOT be touched. Without this, decomposition sprawls \
+and agents wander into unrelated code.
+5. Whether this is one ticket or several independently shippable ones, and if \
+several, what order they have to happen in.
+
+Answer as many of these as you can yourself by reading the repository you are \
+in. Always prefer looking over asking: a question you could have settled by \
+opening a file is a question you should not ask. Do not write or edit any code.
+
+Then ask ONLY for the gaps that remain, all in one message rather than one \
+question at a time. Keep it short and concrete. If the person's description \
+already covers everything, ask nothing at all and draft immediately. You have at \
+most {MAX_QUESTION_ROUNDS} rounds of questions; after that, draft with what you \
+have and record the remaining uncertainty under "Out of scope" or in the \
+context section.
+
+{_SPLIT_RULE}
+
+While you still have questions, write them as plain prose and nothing else. \
+Emit no JSON until you are ready to draft, because the JSON is the signal that \
+you are done asking.
+
+{_TICKET_JSON_SHAPE}"""
 
 
 class PushError(RuntimeError):
@@ -129,6 +186,125 @@ def to_tickets(raw: list[dict]) -> list[Ticket]:
     return out
 
 
+# -- draft rendering and round-tripping --------------------------------------
+
+TICKET_SEPARATOR = "<!-- foreman:ticket -->"
+
+
+def _fmt_list(values: list[str]) -> str:
+    return "[" + ", ".join(values) + "]"
+
+
+def render_ticket_markdown(ticket: Ticket) -> str:
+    """Render a draft in the ticket template's own shape.
+
+    This is what gets shown before anything is created, and what `$EDITOR`
+    opens. It round-trips through parse_ticket_markdown.
+    """
+    return "\n".join(
+        [
+            "---",
+            f"title: {ticket.title}",
+            f"priority: {ticket.priority}",
+            f"labels: {_fmt_list(ticket.labels)}",
+            f"project: {ticket.project or 'null'}",
+            f"estimate: {ticket.estimate or 'null'}",
+            f"blocked_by: {_fmt_list(ticket.blocked_by)}",
+            f"blocks: {_fmt_list(ticket.blocks)}",
+            "---",
+            "",
+            ticket.description.strip(),
+            "",
+        ]
+    )
+
+
+def _parse_list(raw: str) -> list[str]:
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def parse_ticket_markdown(text: str) -> Ticket:
+    """Read a draft back after a human has edited it.
+
+    Deliberately forgiving: someone editing their own ticket in vim should not
+    have to get YAML exactly right for their work to survive.
+    """
+    body = text.strip()
+    fields: dict[str, str] = {}
+
+    if body.startswith("---"):
+        _, _, rest = body.partition("---")
+        front, sep, remainder = rest.partition("\n---")
+        if sep:
+            body = remainder.strip()
+            for line in front.splitlines():
+                key, colon, value = line.partition(":")
+                if colon:
+                    fields[key.strip().lower()] = value.strip()
+
+    title = fields.get("title", "").strip()
+    if not title:
+        raise PushError("the edited ticket has no title")
+
+    def optional(name: str) -> str | None:
+        value = fields.get(name, "").strip()
+        return None if value.lower() in ("", "null", "none") else value
+
+    return Ticket(
+        identifier="",
+        title=title,
+        description=body,
+        priority=(optional("priority") or "medium").lower(),
+        labels=_parse_list(fields.get("labels", "")),
+        project=optional("project"),
+        estimate=(optional("estimate") or "").lower() or None,
+        blocked_by=_parse_list(fields.get("blocked_by", "")),
+        blocks=_parse_list(fields.get("blocks", "")),
+    )
+
+
+def render_drafts(tickets: list[Ticket]) -> str:
+    return f"\n{TICKET_SEPARATOR}\n\n".join(render_ticket_markdown(t) for t in tickets)
+
+
+def parse_drafts(text: str) -> list[Ticket]:
+    chunks = [c.strip() for c in text.split(TICKET_SEPARATOR)]
+    return [parse_ticket_markdown(c) for c in chunks if c.strip()]
+
+
+# -- creation ----------------------------------------------------------------
+
+
+def create_tickets(tickets: list[Ticket], linear: LinearClient) -> list[Ticket]:
+    """Create tickets blockers-first, rewriting index references as we go."""
+    order = _creation_order([{"blocked_by": t.blocked_by} for t in tickets])
+    identifier_for: dict[int, str] = {}
+
+    for pos in order:
+        ticket = tickets[pos]
+        ticket.blocked_by = [
+            identifier_for[int(ref) - 1]
+            for ref in ticket.blocked_by
+            if str(ref).isdigit() and (int(ref) - 1) in identifier_for
+        ]
+        made = linear.create(ticket)
+        identifier_for[pos] = made.identifier
+
+    # `blocks` mirrors `blocked_by`; resolve it now every ticket has an id, so
+    # the objects we hand back are self-consistent.
+    for ticket in tickets:
+        ticket.blocks = [
+            identifier_for[int(ref) - 1]
+            for ref in ticket.blocks
+            if str(ref).isdigit() and (int(ref) - 1) in identifier_for
+        ]
+
+    return [tickets[pos] for pos in sorted(identifier_for)]
+
+
 def push(
     *,
     prose: str,
@@ -150,36 +326,107 @@ def push(
     if run.error:
         raise PushError(f"push session failed: {run.error}")
 
-    raw = parse_push(run.text)
-    tickets = to_tickets(raw)
+    tickets = to_tickets(parse_push(run.text))
     if dry_run:
         return tickets
+    return create_tickets(tickets, linear)
 
-    order = _creation_order(raw)
-    identifier_for: dict[int, str] = {}
-    created: list[Ticket] = []
 
-    for pos in order:
-        ticket = tickets[pos]
-        ticket.blocked_by = [
-            identifier_for[int(ref) - 1]
-            for ref in ticket.blocked_by
-            if str(ref).isdigit() and (int(ref) - 1) in identifier_for
-        ]
-        made = linear.create(ticket)
-        identifier_for[pos] = made.identifier
-        created.append(made)
+# -- interactive -------------------------------------------------------------
 
-    # `blocks` is the mirror of `blocked_by`; resolve it now that every ticket
-    # has an identifier, purely so the returned objects are self-consistent.
-    for pos, ticket in enumerate(tickets):
-        ticket.blocks = [
-            identifier_for[int(ref) - 1]
-            for ref in ticket.blocks
-            if str(ref).isdigit() and (int(ref) - 1) in identifier_for
-        ]
 
-    return [tickets[pos] for pos in sorted(identifier_for)]
+class Aborted(RuntimeError):
+    """The human walked away. Nothing was created."""
+
+
+def push_interactive(
+    *,
+    prose: str,
+    linear: LinearClient,
+    ask: Callable[[str], str],
+    show: Callable[[str], None],
+    edit: Callable[[str], str] | None = None,
+    cwd: str | Path = ".",
+    conversation: Callable[..., AgentRun] = run_conversation,
+    model: str | None = DEFAULT_MODEL,
+) -> list[Ticket]:
+    """Talk it through, show the draft, then create only once told to.
+
+    `pull` stops at a human gate before anything leaves the machine. Until this
+    existed, `push` did not: one line of prose became real tickets in a real
+    workspace, unseen. This closes that asymmetry.
+
+    All the I/O is injected, so the whole flow is testable without a terminal,
+    a model, or an account.
+    """
+    rounds = 0
+
+    def respond(agent_text: str) -> str | None:
+        nonlocal rounds
+        payload = extract_last_json(agent_text)
+        if isinstance(payload, dict) and "tickets" in payload:
+            return None  # the JSON is the signal that it is done asking
+        rounds += 1
+        if rounds > MAX_QUESTION_ROUNDS:
+            return "That is enough questions. Draft the ticket with what you have."
+        show(agent_text)
+        return ask("> ")
+
+    run = conversation(
+        system_prompt=PUSH_CONVERSATION_CONTRACT,
+        opening=f"Here is what I want to achieve:\n\n{prose.strip()}",
+        respond=respond,
+        cwd=cwd,
+        allowed_tools=["Read", "Grep", "Glob"],
+        max_rounds=MAX_QUESTION_ROUNDS + 2,
+        model=model,
+    )
+    if run.error:
+        raise PushError(f"push session failed: {run.error}")
+
+    tickets = to_tickets(parse_push(run.text))
+
+    while True:
+        show("")
+        show(render_drafts(tickets))
+        answer = ask(
+            f"[c]reate {len(tickets)} ticket(s), [e]dit, [q]uit, "
+            "or type feedback to redraft: "
+        ).strip()
+
+        if not answer or answer.lower() in ("c", "create", "y", "yes"):
+            return create_tickets(tickets, linear)
+
+        if answer.lower() in ("q", "quit", "n", "no"):
+            raise Aborted("nothing created")
+
+        if answer.lower() in ("e", "edit"):
+            if edit is None:
+                show("No editor available. Type feedback instead.")
+                continue
+            try:
+                tickets = parse_drafts(edit(render_drafts(tickets)))
+            except PushError as exc:
+                show(f"Could not read that back: {exc}. Nothing changed.")
+            continue
+
+        # Anything else is feedback. Redraft with it, still without creating.
+        run = conversation(
+            system_prompt=PUSH_CONVERSATION_CONTRACT,
+            opening=(
+                f"Here is what I want to achieve:\n\n{prose.strip()}\n\n"
+                f"You drafted:\n\n{render_drafts(tickets)}\n\n"
+                f"Revise it: {answer}\n\nRedraft now; do not ask more questions."
+            ),
+            respond=lambda _text: None,
+            cwd=cwd,
+            allowed_tools=["Read", "Grep", "Glob"],
+            max_rounds=1,
+            model=model,
+        )
+        if run.error:
+            raise PushError(f"redraft failed: {run.error}")
+        tickets = to_tickets(parse_push(run.text))
 
 
 def summarize(tickets: list[Ticket]) -> str:

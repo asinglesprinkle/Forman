@@ -16,8 +16,9 @@ It never merges anything and never marks a ticket done. Every run ends at a huma
 
 ## How it works
 
-**Push.** `foreman push "the auth client never refreshes tokens"` fills a ticket
-template and creates the issue in Linear, assigned to you.
+**Push.** `foreman push` talks it through with you first. It checks your
+description against what the pipeline actually needs to run, asks only for the
+gaps, then shows you the drafted ticket. Nothing is filed until you say so.
 
 **Pull.** `foreman pull` picks a ticket, decomposes it into local sub-tasks, and
 runs them one at a time in fresh agent sessions. It commits after each finished
@@ -61,11 +62,50 @@ the codebase; more than one board just means more than one directory.
 
 ```sh
 foreman doctor                    # read-only: what can Foreman see?
-foreman push "describe a problem" # file a ticket
+foreman push                      # talk through a ticket, then file it
 foreman pull                      # work the next ready ticket
 foreman pull --ticket ABC-42      # or work a specific one
 foreman status                    # what Foreman has in flight here
 ```
+
+### Writing a ticket
+
+`foreman push` is a short conversation, not a one-shot command:
+
+```
+$ foreman push
+What do you want to achieve? (one line is fine)
+> the auth client keeps dropping sessions on long requests
+
+Two things I want to pin down:
+- Is this the token refresh path specifically, or any 401 mid-request?
+- Should the fix cover the mobile client, or just the web SDK?
+
+> just web, and yes it's refresh
+
+---
+title: Refresh auth tokens before they expire mid-request
+priority: high
+labels: [auth]
+...
+
+[c]reate 1 ticket(s), [e]dit, [q]uit, or type feedback to redraft:
+```
+
+The questions come from what the pipeline needs in order to run unsupervised:
+the problem, checkable acceptance criteria, where to look, what is out of
+scope, and whether it is really one ticket. The agent reads your repo to answer
+what it can, and asks only about the rest, so it stops as soon as it can fill
+the template rather than after some fixed number of questions.
+
+The ticket is the last thing a human sees before agents start writing code
+against it, so ambiguity left here does not produce a vague pull request. It
+produces a confidently wrong one, several sessions later. That is why this step
+is a conversation.
+
+`e` opens the draft in `$EDITOR`, anything else you type is treated as feedback
+and redrafts. `foreman push "prose" --yes` skips all of it and files in one
+shot, which is also what happens automatically when stdin is not a terminal.
 
 `doctor` is the one to reach for when something looks wrong. It prints who you
 authenticated as, your teams and workflow states, which state it will use for
@@ -128,11 +168,10 @@ has not been through much mileage.
 - A `failed` sub-task is retried once, since turn limits and dropped
   connections are usually transient. A `blocked` one never is: an external
   blocker will not resolve itself, so retrying only burns tokens.
-- An alternative Linear backend that routes through the Linear MCP server
-  (`--linear mcp`) exists but has **not** been exercised against a live
-  workspace. Prefer the default.
 - `--linear stub` runs the whole pipeline offline against a JSON file, with no
   account and no network. Useful for trying it out.
+- Decomposition has been exercised on small tickets. How it handles a ticket
+  that genuinely needs five interdependent sub-tasks is not yet known.
 
 ## Development
 

@@ -11,6 +11,7 @@ Working more than one board just means running it from more than one directory.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from .config import (
     write_user_env,
 )
 from .decompose import decompose as decompose_ticket
-from .linear_client import LinearClient, McpLinearClient, StubLinearClient, stub_path
+from .linear_client import LinearClient, StubLinearClient, stub_path
 from .linear_graphql import GraphQLLinearClient, LinearApiError
 from .models import CommitResult, PullRequest, SpawnResult, SubTask, Ticket
 from .orchestrator import Deps, run_once
@@ -83,13 +84,10 @@ def build_linear(repo: Path, backend: str) -> LinearClient:
     """Pick a Linear backend.
 
     `graphql` is the default and talks to the real API with a personal key.
-    `stub` is offline. `mcp` routes through the Linear MCP server and is kept
-    for the case where you would rather not hold a key at all.
+    `stub` is offline, backed by a JSON file, and needs no account.
     """
     if backend == "stub":
         return StubLinearClient(path=stub_path(repo))
-    if backend == "mcp":
-        return McpLinearClient(cwd=repo)
 
     settings = load_settings(repo)
     return GraphQLLinearClient(
@@ -188,27 +186,61 @@ def cmd_pull(args: argparse.Namespace) -> int:
     return 1
 
 
+def _edit_in_editor(text: str, suffix: str = ".md") -> str:
+    """Hand text to $EDITOR and read back whatever comes out."""
+    import subprocess
+    import tempfile
+
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+    with tempfile.NamedTemporaryFile("w+", suffix=suffix, delete=False) as handle:
+        handle.write(text)
+        path = handle.name
+    try:
+        subprocess.run([*editor.split(), path], check=True)
+        return Path(path).read_text(encoding="utf-8")
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 def cmd_push(args: argparse.Namespace) -> int:
-    from .push import push, summarize
+    from .push import Aborted, PushError, push, push_interactive, summarize
 
     repo = resolve_repo(args.repo)
-    prose = args.prose or sys.stdin.read()
-    if not prose.strip():
+    interactive = sys.stdin.isatty() and not args.yes and not args.dry_run
+
+    prose = args.prose
+    if not prose and not sys.stdin.isatty():
+        prose = sys.stdin.read()
+    if not prose and interactive:
+        print("What do you want to achieve? (one line is fine)")
+        prose = input("> ").strip()
+    if not prose or not prose.strip():
         print("nothing to push: give prose as an argument or on stdin.", file=sys.stderr)
         return 2
 
     try:
-        tickets = push(
-            prose=prose,
-            linear=build_linear(repo, args.linear),
-            cwd=repo,
-            dry_run=args.dry_run,
-        )
+        linear = build_linear(repo, args.linear)
+        if interactive:
+            tickets = push_interactive(
+                prose=prose,
+                linear=linear,
+                ask=lambda prompt: input(prompt),
+                show=print,
+                edit=_edit_in_editor,
+                cwd=repo,
+            )
+        else:
+            tickets = push(
+                prose=prose, linear=linear, cwd=repo, dry_run=args.dry_run
+            )
+    except Aborted:
+        print("nothing created.")
+        return 0
     except MissingApiKey as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    except LinearApiError as exc:
-        print(f"Linear: {exc}", file=sys.stderr)
+    except (LinearApiError, PushError) as exc:
+        print(f"push failed: {exc}", file=sys.stderr)
         return 2
 
     print(summarize(tickets))
@@ -411,11 +443,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--linear",
-        choices=["graphql", "stub", "mcp"],
+        choices=["graphql", "stub"],
         default="graphql",
         help="Linear backend. `graphql` (default) uses LINEAR_API_KEY against "
-        "the real API. `stub` is offline. `mcp` routes through the Linear MCP "
-        "server instead of a key.",
+        "the real API. `stub` is offline and needs no account.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -433,6 +464,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_push.add_argument("prose", nargs="?", help="issue description (or pipe it on stdin)")
     p_push.add_argument(
         "--dry-run", action="store_true", help="show the tickets without creating them"
+    )
+    p_push.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="skip the conversation and the draft review; file it in one shot",
     )
     p_push.set_defaults(func=cmd_push)
 
