@@ -283,6 +283,13 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
         result = _spawn_with_retry(deps, ticket, subtask, state)
 
         subtask.finished_at = deps.now()
+        # Recorded for every outcome, not just done: a blocked or failed session
+        # still burned tokens, and the session id is how you go and read it.
+        # Set before the branches so it lands in the store.save each one does.
+        # On a retry this is the last attempt's session and that session's cost
+        # only; earlier attempts are not accumulated.
+        subtask.session_id = result.session_id
+        subtask.cost_usd = result.total_cost_usd
         if result.status == SubTaskStatus.DONE.value:
             subtask.status = SubTaskStatus.DONE.value
             subtask.log = result.summary
