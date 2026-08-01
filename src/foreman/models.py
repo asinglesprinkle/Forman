@@ -198,3 +198,7 @@ class RunReport:
     detail: str = ""
     notes: list[str] = field(default_factory=list)
     subtasks: list[dict[str, Any]] = field(default_factory=list)
+    # Everything the sub-task sessions cost, summed by state.total_cost_usd.
+    # Sub-tasks with nothing recorded count as zero, so this is a floor, not a
+    # guess. Reporting only: nothing in the pipeline reads it back.
+    total_cost_usd: float = 0.0

@@ -5,10 +5,12 @@ import json
 from foreman.models import SubTask, SubTaskStatus, TicketState
 from foreman.state import (
     StateStore,
+    format_cost,
     next_ready_subtask,
     render_manifest,
     state_from_dict,
     state_to_dict,
+    total_cost_usd,
 )
 
 
@@ -140,6 +142,57 @@ def test_manifest_markers_and_notes():
     assert "[ ] `A.03`" in out and "(waiting on A.02)" in out
     assert "[!] `A.04`" in out and "needs a STRIPE_KEY" in out
     assert "[X] `A.05`" in out and "turn limit hit" in out
+
+
+def test_manifest_shows_a_cost_per_subtask_and_a_total():
+    state = make_state()
+    state.subtask("TEAM-7.01").status = SubTaskStatus.DONE.value
+    state.subtask("TEAM-7.01").cost_usd = 0.42
+    state.subtask("TEAM-7.02").status = SubTaskStatus.DONE.value
+    state.subtask("TEAM-7.02").cost_usd = 1.5
+
+    out = render_manifest(state)
+
+    # The one-line-per-sub-task shape is unchanged; the cost rides on the end.
+    assert "[x] `TEAM-7.01` Add a token bucket helper  $0.4200" in out
+    assert "[x] `TEAM-7.02`" in out and "$1.5000" in out
+    assert "**Total: $1.9200**" in out
+
+
+def test_manifest_handles_subtasks_with_no_recorded_cost():
+    # Nothing has run yet, so no sub-task has a cost. Rendering must still work
+    # and the total must be zero rather than a crash or a blank.
+    state = make_state()
+    out = render_manifest(state)
+
+    assert "[ ] `TEAM-7.01` Add a token bucket helper" in out
+    assert "$" not in out.split("## Sub-tasks")[1].split("**Total")[0]
+    assert "**Total: $0.0000**" in out
+
+
+def test_missing_costs_count_as_zero_in_the_total():
+    state = make_state()
+    state.subtask("TEAM-7.01").cost_usd = 0.25
+    # TEAM-7.02 never ran, so its cost is None.
+    assert total_cost_usd(state) == 0.25
+
+    # And a state with no sub-tasks at all sums to zero.
+    assert total_cost_usd(TicketState(ticket="TEAM-8")) == 0.0
+
+
+def test_total_cost_does_not_leak_float_noise():
+    state = make_state()
+    state.subtask("TEAM-7.01").cost_usd = 0.1
+    state.subtask("TEAM-7.02").cost_usd = 0.2
+    assert total_cost_usd(state) == 0.3
+
+
+def test_format_cost_treats_none_as_zero_and_keeps_four_places():
+    assert format_cost(None) == "$0.0000"
+    assert format_cost(0.0) == "$0.0000"
+    # Four places, not two, so a cheap session is not reported as $0.00.
+    assert format_cost(0.0031) == "$0.0031"
+    assert format_cost(12.5) == "$12.5000"
 
 
 def test_next_ready_subtask_respects_depends_on():

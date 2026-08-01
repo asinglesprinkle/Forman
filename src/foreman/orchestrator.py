@@ -28,7 +28,7 @@ from .models import (
     TicketStatus,
     iso_now,
 )
-from .state import StateStore, next_ready_subtask
+from .state import StateStore, next_ready_subtask, total_cost_usd
 from .topo import ready_nodes
 
 _PRIORITY_RANK = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
@@ -191,6 +191,7 @@ def _subtask_rows(state: TicketState) -> list[dict]:
             "goal": st.goal,
             "status": st.status,
             "reason": st.blocked_reason,
+            "cost_usd": st.cost_usd,
         }
         for st in state.subtasks
     ]
@@ -382,6 +383,7 @@ def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
             branch=state.branch,
             detail="sub-tasks remain blocked, failed, or unreachable",
             subtasks=_subtask_rows(state),
+            total_cost_usd=total_cost_usd(state),
         )
 
     deps.git.commit(f"{ticket.identifier}: {ticket.title}")
@@ -427,4 +429,5 @@ def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
         detail="stopped at the human gate: PR open, ticket in review",
         notes=notes,
         subtasks=_subtask_rows(state),
+        total_cost_usd=total_cost_usd(state),
     )

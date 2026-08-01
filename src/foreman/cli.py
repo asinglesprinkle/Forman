@@ -34,7 +34,7 @@ from .linear_graphql import GraphQLLinearClient, LinearApiError
 from .models import CommitResult, PullRequest, SpawnResult, SubTask, Ticket
 from .orchestrator import Deps, run_once
 from .spawn import spawn_agent
-from .state import StateStore
+from .state import StateStore, format_cost
 
 
 class GitAdapter:
@@ -180,9 +180,11 @@ def cmd_pull(args: argparse.Namespace) -> int:
     if report.outcome == "in_review":
         print(f"\n{report.detail}")
         print(f"pull request: {report.pr_url or '(open it by hand, see the ticket comment)'}")
+        print(f"total cost: {format_cost(report.total_cost_usd)}")
         return 0
 
     print(f"\nhalted: {report.detail}")
+    print(f"total cost: {format_cost(report.total_cost_usd)}")
     return 1
 
 
