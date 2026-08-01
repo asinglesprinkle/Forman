@@ -86,6 +86,11 @@ class SubTask:
     log: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
+    # Recorded from the SpawnResult of the session that ran this sub-task.
+    # Both stay None until a session finishes, and for sub-tasks written by a
+    # Foreman old enough not to have captured them.
+    session_id: str | None = None
+    cost_usd: float | None = None
 
     def is_done(self) -> bool:
         return self.status == SubTaskStatus.DONE.value
