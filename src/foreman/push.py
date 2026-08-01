@@ -16,6 +16,16 @@ from typing import Callable
 
 from .linear_client import LinearClient
 from .models import Ticket
+from .review import (
+    CREATE,
+    EDIT,
+    FEEDBACK,
+    QUIT,
+    Approval,
+    Question,
+    Reviewer,
+    TerminalReviewer,
+)
 from .spawn import (
     DEFAULT_MODEL,
     AgentRun,
@@ -343,8 +353,9 @@ def push_interactive(
     *,
     prose: str,
     linear: LinearClient,
-    ask: Callable[[str], str],
-    show: Callable[[str], None],
+    ask: Callable[[str], str] | None = None,
+    show: Callable[[str], None] | None = None,
+    reviewer: Reviewer | None = None,
     edit: Callable[[str], str] | None = None,
     cwd: str | Path = ".",
     conversation: Callable[..., AgentRun] = run_conversation,
@@ -358,7 +369,16 @@ def push_interactive(
 
     All the I/O is injected, so the whole flow is testable without a terminal,
     a model, or an account.
+
+    The human side is a `Reviewer`. Passing `ask` and `show` instead builds a
+    `TerminalReviewer` from them, which is what every caller did before the port
+    existed and does exactly what it did then.
     """
+    if reviewer is None:
+        if ask is None or show is None:
+            raise TypeError("push_interactive needs either reviewer, or both ask and show")
+        reviewer = TerminalReviewer(ask=ask, show=show)
+
     rounds = 0
 
     def respond(agent_text: str) -> str | None:
@@ -369,8 +389,7 @@ def push_interactive(
         rounds += 1
         if rounds > MAX_QUESTION_ROUNDS:
             return "That is enough questions. Draft the ticket with what you have."
-        show(agent_text)
-        return ask("> ")
+        return reviewer.answer(Question(text=agent_text, round=rounds))
 
     run = conversation(
         system_prompt=PUSH_CONVERSATION_CONTRACT,
@@ -387,36 +406,37 @@ def push_interactive(
     tickets = to_tickets(parse_push(run.text))
 
     while True:
-        show("")
-        show(render_drafts(tickets))
-        answer = ask(
-            f"[c]reate {len(tickets)} ticket(s), [e]dit, [q]uit, "
-            "or type feedback to redraft: "
-        ).strip()
+        decision = reviewer.decide(
+            Approval(tickets=tickets, rendered=render_drafts(tickets))
+        )
 
-        if not answer or answer.lower() in ("c", "create", "y", "yes"):
+        if decision.action == CREATE:
             return create_tickets(tickets, linear)
 
-        if answer.lower() in ("q", "quit", "n", "no"):
+        if decision.action == QUIT:
             raise Aborted("nothing created")
 
-        if answer.lower() in ("e", "edit"):
+        if decision.action == EDIT:
             if edit is None:
-                show("No editor available. Type feedback instead.")
+                reviewer.show("No editor available. Type feedback instead.")
                 continue
             try:
                 tickets = parse_drafts(edit(render_drafts(tickets)))
             except PushError as exc:
-                show(f"Could not read that back: {exc}. Nothing changed.")
+                reviewer.show(f"Could not read that back: {exc}. Nothing changed.")
             continue
 
-        # Anything else is feedback. Redraft with it, still without creating.
+        if decision.action != FEEDBACK:
+            raise PushError(f"reviewer returned an unknown action: {decision.action!r}")
+
+        # Feedback. Redraft with it, still without creating.
         run = conversation(
             system_prompt=PUSH_CONVERSATION_CONTRACT,
             opening=(
                 f"Here is what I want to achieve:\n\n{prose.strip()}\n\n"
                 f"You drafted:\n\n{render_drafts(tickets)}\n\n"
-                f"Revise it: {answer}\n\nRedraft now; do not ask more questions."
+                f"Revise it: {decision.feedback}\n\n"
+                "Redraft now; do not ask more questions."
             ),
             respond=lambda _text: None,
             cwd=cwd,
