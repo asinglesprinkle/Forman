@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Secrets. LINEAR_API_KEY lives here. Never commit this.
+.env
+.env.*
+!.env.example
+
+# Foreman bookkeeping lives in the TARGET repo, not here, but ignore it
+# anyway so a self-hosted run does not commit its own scratch state.
+.foreman/

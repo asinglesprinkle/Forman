@@ -1,0 +1,81 @@
+"""Forcing a specific ticket, and surviving a board with no review state.
+
+Both of these exist because of what `foreman doctor` turned up on a real
+workspace: left to itself the selector would have grabbed live work, and plenty
+of boards have no in-review state for the gate to move a ticket into.
+"""
+
+from foreman.linear_client import StubLinearClient
+from foreman.models import Ticket, TicketStatus
+from foreman.orchestrator import run_once
+
+from test_orchestrator_stub import TWO_STEP, FakeGit, make_deps
+
+
+class NoReviewStateLinear(StubLinearClient):
+    """A board whose workflow has nowhere called anything like 'in review'."""
+
+    def set_status(self, identifier: str, status: str) -> None:
+        raise RuntimeError(
+            f"no workflow state on team TEAM matching {status!r}. "
+            "Available: In Progress, Backlog, Todo, Canceled, Done, Duplicate"
+        )
+
+
+def test_forced_ticket_beats_the_selector(tmp_path):
+    tickets = [
+        Ticket(identifier="TEAM-30", title="Real work in progress", priority="urgent"),
+        Ticket(identifier="TEAM-31", title="Foreman smoke test", priority="low"),
+    ]
+    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
+
+    # Left alone, the selector takes the urgent one.
+    assert run_once(deps).ticket == "TEAM-30"
+
+
+def test_forced_ticket_is_worked_even_when_lower_priority(tmp_path):
+    tickets = [
+        Ticket(identifier="TEAM-30", title="Real work in progress", priority="urgent"),
+        Ticket(identifier="TEAM-31", title="Foreman smoke test", priority="low"),
+    ]
+    goals = [("do the thing", []), ("do the other thing", ["TEAM-31.01"])]
+    deps, store, linear, git = make_deps(tmp_path, goals, tickets=tickets)
+
+    report = run_once(deps, ticket_id="TEAM-31")
+
+    assert report.ticket == "TEAM-31"
+    assert report.outcome == "in_review"
+    assert report.branch == "team-31/foreman-smoke-test"
+    # The urgent ticket was never touched.
+    assert not store.exists("TEAM-30")
+
+
+def test_forcing_a_finished_ticket_is_a_no_op(tmp_path):
+    tickets = [Ticket(identifier="TEAM-31", title="Already shipped", status="done")]
+    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
+
+    report = run_once(deps, ticket_id="TEAM-31")
+
+    assert report.outcome == "no_work"
+    assert "already finished" in report.detail
+    assert git.commits == []
+
+
+def test_missing_review_state_does_not_fail_a_finished_run(tmp_path):
+    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps.linear = NoReviewStateLinear(
+        [Ticket(identifier="TEAM-7", title="Add rate limiting to the auth endpoint")]
+    )
+
+    report = run_once(deps)
+
+    # The real gate happened: PR open, link commented, local state at in_review.
+    assert report.outcome == "in_review"
+    assert report.pr_url == "https://github.com/o/r/pull/1"
+    assert store.load("TEAM-7").status == TicketStatus.IN_REVIEW.value
+    assert any("Pull request opened" in body for _, body in deps.linear.comments)
+
+    # And the failure is surfaced rather than swallowed.
+    assert report.notes
+    assert "in-review" in report.notes[0]
+    assert "Available: In Progress" in report.notes[0]
