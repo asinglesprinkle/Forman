@@ -139,6 +139,25 @@ _MARKERS = {
 }
 
 
+def total_cost_usd(state: TicketState) -> float:
+    """What the ticket has cost so far, in USD.
+
+    The single place the sum is computed. render_manifest and the orchestrator's
+    RunReport both call this, so the manifest and the report can never disagree.
+
+    A sub-task with no recorded cost counts as zero: that is either a sub-task
+    that has not run yet, or one written by a Foreman old enough not to have
+    captured the figure. Neither is worth refusing to add up. Rounded because
+    summing floats otherwise produces things like 0.30000000000000004.
+    """
+    return round(sum(st.cost_usd or 0.0 for st in state.subtasks), 6)
+
+
+def format_cost(value: float | None) -> str:
+    """USD to four places. Four, not two, so a few-cent session is not $0.00."""
+    return f"${value or 0.0:.4f}"
+
+
 def render_manifest(state: TicketState) -> str:
     """Render state.json as a human-readable checklist.
 
@@ -177,13 +196,45 @@ def render_manifest(state: TicketState) -> str:
             unmet = [d for d in st.depends_on if d not in done]
             if unmet:
                 note = f"  (waiting on {', '.join(unmet)})"
-        lines.append(f"- {marker} `{st.id}` {st.goal}{note}")
+        cost = f"  {format_cost(st.cost_usd)}" if st.cost_usd is not None else ""
+        lines.append(f"- {marker} `{st.id}` {st.goal}{note}{cost}")
 
-    lines.append("")
+    lines += [
+        "",
+        f"**Total: {format_cost(total_cost_usd(state))}**",
+        "",
+    ]
     return "\n".join(lines)
 
 
 # -- queries the orchestrator needs -----------------------------------------
+
+
+def reset_for_resume(
+    state: TicketState, include_blocked: bool = True
+) -> list[tuple[str, str]]:
+    """Put failed (and by default blocked) sub-tasks back to pending.
+
+    Nothing in the loop does this on its own, and that is deliberate: a failed
+    or blocked sub-task means a human has to look. Resuming is that human
+    saying they have looked. Returns what changed, so the caller can report it.
+
+    Done sub-tasks are never touched, which is what makes a re-run skip work
+    that already succeeded.
+    """
+    wanted = {SubTaskStatus.FAILED.value}
+    if include_blocked:
+        wanted.add(SubTaskStatus.BLOCKED.value)
+
+    changed: list[tuple[str, str]] = []
+    for st in state.subtasks:
+        if st.status in wanted:
+            changed.append((st.id, st.status))
+            st.status = SubTaskStatus.PENDING.value
+            st.blocked_reason = None
+            st.started_at = None
+            st.finished_at = None
+    return changed
 
 
 def next_ready_subtask(state: TicketState) -> SubTask | None:

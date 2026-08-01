@@ -28,7 +28,7 @@ from .models import (
     TicketStatus,
     iso_now,
 )
-from .state import StateStore, next_ready_subtask
+from .state import StateStore, next_ready_subtask, total_cost_usd
 from .topo import ready_nodes
 
 _PRIORITY_RANK = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
@@ -191,6 +191,7 @@ def _subtask_rows(state: TicketState) -> list[dict]:
             "goal": st.goal,
             "status": st.status,
             "reason": st.blocked_reason,
+            "cost_usd": st.cost_usd,
         }
         for st in state.subtasks
     ]
@@ -283,6 +284,13 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
         result = _spawn_with_retry(deps, ticket, subtask, state)
 
         subtask.finished_at = deps.now()
+        # Recorded for every outcome, not just done: a blocked or failed session
+        # still burned tokens, and the session id is how you go and read it.
+        # Set before the branches so it lands in the store.save each one does.
+        # On a retry this is the last attempt's session and that session's cost
+        # only; earlier attempts are not accumulated.
+        subtask.session_id = result.session_id
+        subtask.cost_usd = result.total_cost_usd
         if result.status == SubTaskStatus.DONE.value:
             subtask.status = SubTaskStatus.DONE.value
             subtask.log = result.summary
@@ -339,6 +347,10 @@ def _spawn_with_retry(
         )
         if result.status != SubTaskStatus.FAILED.value:
             return result
+        if not result.retryable:
+            # A usage limit or a bad credential will still be there on attempt
+            # two. Stop now and let the human deal with it.
+            return result
 
         last_error = result.error
         if attempt < total:
@@ -371,6 +383,7 @@ def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
             branch=state.branch,
             detail="sub-tasks remain blocked, failed, or unreachable",
             subtasks=_subtask_rows(state),
+            total_cost_usd=total_cost_usd(state),
         )
 
     deps.git.commit(f"{ticket.identifier}: {ticket.title}")
@@ -416,4 +429,5 @@ def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
         detail="stopped at the human gate: PR open, ticket in review",
         notes=notes,
         subtasks=_subtask_rows(state),
+        total_cost_usd=total_cost_usd(state),
     )

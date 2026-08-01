@@ -86,6 +86,11 @@ class SubTask:
     log: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
+    # Recorded from the SpawnResult of the session that ran this sub-task.
+    # Both stay None until a session finishes, and for sub-tasks written by a
+    # Foreman old enough not to have captured them.
+    session_id: str | None = None
+    cost_usd: float | None = None
 
     def is_done(self) -> bool:
         return self.status == SubTaskStatus.DONE.value
@@ -143,6 +148,10 @@ class SpawnResult:
     session_id: str | None = None
     total_cost_usd: float | None = None
     raw: str | None = None
+    # False when the failure will still be there in ten seconds. A usage limit
+    # or a bad credential is not transient the way a dropped connection is, so
+    # retrying it immediately just burns the second attempt for nothing.
+    retryable: bool = True
 
     @property
     def ok(self) -> bool:
@@ -189,3 +198,7 @@ class RunReport:
     detail: str = ""
     notes: list[str] = field(default_factory=list)
     subtasks: list[dict[str, Any]] = field(default_factory=list)
+    # Everything the sub-task sessions cost, summed by state.total_cost_usd.
+    # Sub-tasks with nothing recorded count as zero, so this is a floor, not a
+    # guess. Reporting only: nothing in the pipeline reads it back.
+    total_cost_usd: float = 0.0

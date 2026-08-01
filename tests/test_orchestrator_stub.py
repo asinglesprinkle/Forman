@@ -280,6 +280,127 @@ def test_no_commit_for_a_blocked_subtask(tmp_path):
     assert git.commits == []
 
 
+# -- session id and cost -----------------------------------------------------
+
+
+def test_session_and_cost_are_recorded_for_done_subtasks(tmp_path):
+    results = {
+        "TEAM-7.01": SpawnResult(
+            status="done", summary="did the helper", session_id="sess-01", total_cost_usd=0.42
+        ),
+        "TEAM-7.02": SpawnResult(
+            status="done", summary="wired it up", session_id="sess-02", total_cost_usd=1.5
+        ),
+    }
+    deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
+
+    run_once(deps)
+
+    state = store.load("TEAM-7")
+    assert state.subtask("TEAM-7.01").session_id == "sess-01"
+    assert state.subtask("TEAM-7.01").cost_usd == 0.42
+    assert state.subtask("TEAM-7.02").session_id == "sess-02"
+    assert state.subtask("TEAM-7.02").cost_usd == 1.5
+
+
+def test_session_and_cost_are_recorded_for_blocked_and_failed_subtasks(tmp_path):
+    # A session that ended badly still burned tokens, and its id is how you go
+    # and read it, so both outcomes must record them too.
+    goals = [("blocked thing", []), ("failed thing", [])]
+    results = {
+        "TEAM-7.01": SpawnResult(
+            status="blocked",
+            blocked_reason="needs a key only the human has",
+            session_id="sess-blocked",
+            total_cost_usd=0.11,
+        ),
+        "TEAM-7.02": SpawnResult(
+            status="failed",
+            error="agent hit its turn limit",
+            session_id="sess-failed",
+            total_cost_usd=0.22,
+        ),
+    }
+    deps, store, *_ = make_deps(tmp_path, goals, results)
+
+    run_once(deps)
+
+    state = store.load("TEAM-7")
+    assert state.subtask("TEAM-7.01").status == SubTaskStatus.BLOCKED.value
+    assert state.subtask("TEAM-7.01").session_id == "sess-blocked"
+    assert state.subtask("TEAM-7.01").cost_usd == 0.11
+    assert state.subtask("TEAM-7.02").status == SubTaskStatus.FAILED.value
+    assert state.subtask("TEAM-7.02").session_id == "sess-failed"
+    assert state.subtask("TEAM-7.02").cost_usd == 0.22
+
+
+def test_a_retried_subtask_records_the_last_attempts_session(tmp_path):
+    results = {
+        "TEAM-7.01": [
+            SpawnResult(
+                status="failed", error="connection dropped", session_id="sess-a", total_cost_usd=0.1
+            ),
+            SpawnResult(
+                status="done", summary="finished it", session_id="sess-b", total_cost_usd=0.3
+            ),
+        ]
+    }
+    deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
+
+    run_once(deps)
+
+    subtask = store.load("TEAM-7").subtask("TEAM-7.01")
+    assert subtask.status == SubTaskStatus.DONE.value
+    # The last attempt's session, and that session's cost only. Costs are
+    # deliberately not accumulated across attempts in v1.
+    assert subtask.session_id == "sess-b"
+    assert subtask.cost_usd == 0.3
+
+
+def test_report_carries_the_ticket_total_and_per_subtask_cost(tmp_path):
+    results = {
+        "TEAM-7.01": SpawnResult(status="done", session_id="sess-01", total_cost_usd=0.42),
+        "TEAM-7.02": SpawnResult(status="done", session_id="sess-02", total_cost_usd=1.5),
+    }
+    deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
+
+    report = run_once(deps)
+
+    assert report.outcome == "in_review"
+    assert report.total_cost_usd == 1.92
+    assert [row["cost_usd"] for row in report.subtasks] == [0.42, 1.5]
+    # The report and the manifest are summed by the same helper, so they agree.
+    assert "**Total: $1.9200**" in store.manifest_path("TEAM-7").read_text()
+
+
+def test_halted_report_still_carries_the_total(tmp_path):
+    # A run that never reaches the gate still spent money, and that is exactly
+    # when you want to know how much.
+    results = {
+        "TEAM-7.01": SpawnResult(status="done", total_cost_usd=0.42),
+        "TEAM-7.02": SpawnResult(
+            status="blocked", blocked_reason="waiting on TEAM-8", total_cost_usd=0.08
+        ),
+    }
+    deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
+
+    report = run_once(deps)
+
+    assert report.outcome == "halted"
+    assert report.total_cost_usd == 0.5
+
+
+def test_total_is_zero_when_no_costs_were_recorded(tmp_path):
+    # The spawn fake returns results with no cost at all, as an older Foreman or
+    # a stubbed session would. Reporting must not crash or invent a figure.
+    deps, store, *_ = make_deps(tmp_path, TWO_STEP)
+
+    report = run_once(deps)
+
+    assert report.outcome == "in_review"
+    assert report.total_cost_usd == 0.0
+
+
 # -- resume ------------------------------------------------------------------
 
 

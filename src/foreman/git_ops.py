@@ -86,8 +86,11 @@ def current_branch(repo: str | Path) -> str:
 
 def worktree_status(repo: str | Path) -> WorktreeStatus:
     out = _run(repo, "status", "--porcelain")
-    files = [line[3:] for line in out.splitlines() if line.strip()]
-    return WorktreeStatus(clean=not files, files=files)
+    # Porcelain lines are `XY path`, but _run strips the whole output, which
+    # eats the leading space of the first line when its index status is blank.
+    # Slicing past the two status columns and stripping handles both shapes.
+    files = [line[2:].strip() for line in out.splitlines() if line.strip()]
+    return WorktreeStatus(clean=not files, files=[f for f in files if f])
 
 
 def require_clean(repo: str | Path) -> None:
