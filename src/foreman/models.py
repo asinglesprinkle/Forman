@@ -143,6 +143,10 @@ class SpawnResult:
     session_id: str | None = None
     total_cost_usd: float | None = None
     raw: str | None = None
+    # False when the failure will still be there in ten seconds. A usage limit
+    # or a bad credential is not transient the way a dropped connection is, so
+    # retrying it immediately just burns the second attempt for nothing.
+    retryable: bool = True
 
     @property
     def ok(self) -> bool:

@@ -339,6 +339,10 @@ def _spawn_with_retry(
         )
         if result.status != SubTaskStatus.FAILED.value:
             return result
+        if not result.retryable:
+            # A usage limit or a bad credential will still be there on attempt
+            # two. Stop now and let the human deal with it.
+            return result
 
         last_error = result.error
         if attempt < total:
