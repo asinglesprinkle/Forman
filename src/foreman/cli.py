@@ -459,6 +459,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     status = git_ops.worktree_status(repo)
     if not status.clean:
+        sys.stdout.flush()  # stderr is unbuffered and would jump the queue
         print(
             "\nThe working tree is dirty, so `foreman pull` will refuse to start:",
             file=sys.stderr,

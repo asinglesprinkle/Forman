@@ -203,3 +203,33 @@ def test_a_transient_failure_is_still_retried(tmp_path):
     run_once(deps)
 
     assert [c["attempt"] for c in spawn.calls if c["id"] == "TEAM-7.01"] == [1, 2]
+
+
+# -- porcelain parsing -------------------------------------------------------
+
+
+def test_dirty_file_names_are_not_truncated(tmp_path):
+    """git_ops._run strips the whole output, which eats the leading space of
+    the first porcelain line. Slicing a fixed 3 chars then loses a character
+    off the first filename, in every dirty-tree message."""
+    import subprocess
+
+    from foreman.git_ops import worktree_status
+
+    def sh(*args):
+        subprocess.run(args, cwd=tmp_path, capture_output=True, check=True)
+
+    sh("git", "init", "-q")
+    sh("git", "config", "user.email", "t@example.com")
+    sh("git", "config", "user.name", "Test")
+    (tmp_path / "alpha.py").write_text("one\n")
+    (tmp_path / "beta.py").write_text("two\n")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-qm", "init")
+
+    (tmp_path / "alpha.py").write_text("changed\n")
+    (tmp_path / "beta.py").write_text("changed\n")
+
+    status = worktree_status(tmp_path)
+    assert not status.clean
+    assert sorted(status.files) == ["alpha.py", "beta.py"]
