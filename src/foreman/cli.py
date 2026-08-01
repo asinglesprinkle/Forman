@@ -206,6 +206,7 @@ def _edit_in_editor(text: str, suffix: str = ".md") -> str:
 
 def cmd_push(args: argparse.Namespace) -> int:
     from .push import Aborted, PushError, push, push_interactive, summarize
+    from .review import TerminalReviewer
 
     repo = resolve_repo(args.repo)
     interactive = sys.stdin.isatty() and not args.yes and not args.dry_run
@@ -226,8 +227,7 @@ def cmd_push(args: argparse.Namespace) -> int:
             tickets = push_interactive(
                 prose=prose,
                 linear=linear,
-                ask=lambda prompt: input(prompt),
-                show=print,
+                reviewer=TerminalReviewer(ask=lambda prompt: input(prompt), show=print),
                 edit=_edit_in_editor,
                 cwd=repo,
             )
