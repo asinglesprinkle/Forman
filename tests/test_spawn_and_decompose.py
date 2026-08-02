@@ -11,7 +11,50 @@ from forman.decompose import (
 )
 from forman.git_ops import branch_name, slugify
 from forman.models import SubTaskSpec, SubTaskStatus, Ticket
-from forman.spawn import AgentRun, extract_last_json, result_from_run, spawn_agent
+from forman.spawn import (
+    Activity,
+    AgentRun,
+    describe_activity,
+    extract_last_json,
+    result_from_run,
+    spawn_agent,
+)
+
+
+# -- describing what the agent is doing --------------------------------------
+
+
+def test_activity_names_the_file_a_read_is_about():
+    activity = Activity(kind="tool", tool="Read", tool_input={"file_path": "src/cli.py"})
+    assert describe_activity(activity) == "read src/cli.py"
+
+
+def test_activity_falls_back_to_the_bare_tool_name_when_it_has_no_known_detail():
+    assert describe_activity(Activity(kind="tool", tool="WebFetch")) == "webfetch"
+
+
+def test_activity_never_dumps_an_unlisted_input_dict():
+    activity = Activity(
+        kind="tool", tool="WebFetch", tool_input={"url": "https://example.com/secret"}
+    )
+    assert "example.com" not in describe_activity(activity)
+
+
+def test_long_details_are_truncated_to_one_line():
+    activity = Activity(kind="tool", tool="Bash", tool_input={"command": "x" * 200})
+    rendered = describe_activity(activity, width=20)
+    assert rendered == "bash " + "x" * 19 + "…"
+
+
+def test_details_collapse_to_a_single_line():
+    activity = Activity(
+        kind="tool", tool="Bash", tool_input={"command": "pytest \\\n  --verbose"}
+    )
+    assert describe_activity(activity) == "bash pytest \\ --verbose"
+
+
+def test_thinking_needs_no_tool():
+    assert describe_activity(Activity(kind="thinking")) == "thinking"
 
 
 # -- reading what the agent said ---------------------------------------------

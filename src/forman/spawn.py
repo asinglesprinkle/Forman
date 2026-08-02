@@ -40,6 +40,48 @@ human can make, a missing credential, an unfinished upstream dependency).\
 """
 
 
+@dataclass(frozen=True)
+class Activity:
+    """One observable thing an agent did mid-session.
+
+    Reported live, while a conversation is still running, so a caller holding a
+    terminal can show that the thing is alive. Facts only: what tool, with what
+    input. Rendering is the caller's business, because only the caller knows
+    whether it is writing to a TTY, a log, or nothing at all.
+    """
+
+    kind: str  # "tool" or "thinking"
+    tool: str = ""
+    tool_input: dict[str, Any] | None = None
+
+
+# The argument that best says what a call is *about*, per tool. Anything not
+# listed falls back to no detail rather than dumping an arbitrary input dict to
+# someone's terminal.
+_ACTIVITY_DETAIL = {
+    "Read": "file_path",
+    "Edit": "file_path",
+    "Write": "file_path",
+    "Glob": "pattern",
+    "Grep": "pattern",
+    "Bash": "command",
+}
+
+
+def describe_activity(activity: Activity, *, width: int = 60) -> str:
+    """Render an Activity as one short line. Pure, so it can be tested."""
+    if activity.kind == "thinking":
+        return "thinking"
+    detail = ""
+    key = _ACTIVITY_DETAIL.get(activity.tool)
+    if key:
+        detail = str((activity.tool_input or {}).get(key) or "").strip()
+        detail = " ".join(detail.split())
+        if len(detail) > width:
+            detail = detail[: width - 1] + "…"
+    return f"{activity.tool.lower()} {detail}".strip()
+
+
 @dataclass
 class AgentRun:
     """Raw outcome of one SDK session, before any pipeline meaning is attached."""
@@ -146,6 +188,7 @@ def run_conversation(
     max_rounds: int = 6,
     max_turns: int = DEFAULT_MAX_TURNS,
     model: str | None = DEFAULT_MODEL,
+    on_activity: Callable[[Activity], None] | None = None,
 ) -> AgentRun:
     """Hold one multi-turn conversation and return its final message.
 
@@ -156,6 +199,10 @@ def run_conversation(
     `respond` receives each agent message and returns the human's reply, or None
     to end the conversation. Keeping that a callback is what lets the whole
     thing be tested with canned answers and no SDK.
+
+    `on_activity` is called as the agent works, before it has said anything. The
+    first round can run for minutes while the agent reads a repository, and a
+    caller with a terminal needs some way to tell that from a hang.
     """
     try:
         from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -163,6 +210,8 @@ def run_conversation(
             ClaudeAgentOptions,
             ClaudeSDKClient,
             TextBlock,
+            ThinkingBlock,
+            ToolUseBlock,
         )
     except ImportError as exc:  # pragma: no cover - environment dependent
         return AgentRun(error=f"claude-agent-sdk is not installed: {exc}")
@@ -175,6 +224,16 @@ def run_conversation(
         cwd=str(cwd),
         model=model,
     )
+
+    def _report(activity: Activity) -> None:
+        # A progress display must never be able to kill a session that is midway
+        # through creating things. Drop its errors on the floor deliberately.
+        if on_activity is None:
+            return
+        try:
+            on_activity(activity)
+        except Exception:  # pragma: no cover - a broken display, not a broken run
+            pass
 
     async def _talk() -> AgentRun:
         run = AgentRun()
@@ -189,6 +248,16 @@ def run_conversation(
                             for block in message.content:
                                 if isinstance(block, TextBlock):
                                     chunks.append(block.text)
+                                elif isinstance(block, ToolUseBlock):
+                                    _report(
+                                        Activity(
+                                            kind="tool",
+                                            tool=block.name,
+                                            tool_input=dict(block.input or {}),
+                                        )
+                                    )
+                                elif isinstance(block, ThinkingBlock):
+                                    _report(Activity(kind="thinking"))
                             continue
                         for attr in ("session_id", "total_cost_usd"):
                             value = getattr(message, attr, None)
