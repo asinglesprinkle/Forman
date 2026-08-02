@@ -28,6 +28,11 @@ DEFAULT_MODEL = "claude-opus-5"
 # it cannot be narrowed much; permission_mode keeps edits from prompting.
 DEFAULT_TOOLS = ["Bash", "Edit", "Read", "Grep"]
 
+# What an agent that is only meant to look gets. Every planning and drafting
+# session in this codebase runs on these: they read the repository to ground
+# what they write, and write nothing themselves.
+READ_ONLY_TOOLS = ["Read", "Grep", "Glob"]
+
 SPAWN_CONTRACT = """\
 You are executing ONE sub-task defined in the provided README. Do only what that \
 README specifies; its parent ticket and sibling logs are context, not a to-do \
@@ -109,6 +114,42 @@ class AgentRunner(Protocol):
     ) -> AgentRun: ...
 
 
+def _options(options_cls, *, tools: list[str], **rest):
+    """Build the SDK options every session in this codebase runs under.
+
+    Three of these are the difference between an agent that does what its
+    contract says and one that can do anything the machine can:
+
+    `tools` is the real restriction. `allowed_tools` only says which tools skip
+    the permission prompt - the model keeps the full built-in set regardless -
+    so a ticket-drafting agent told it may use Read/Grep/Glob was still handed
+    Bash, and used it to read around the filesystem outside the repo.
+
+    `mcp_servers` and `strict_mcp_config` cut the session off from whatever MCP
+    servers the person running it happens to have configured. Without this the
+    SDK loads the user's own config, and a planning agent found itself holding
+    write access to the very Linear workspace this pipeline is careful to only
+    touch through a human gate. Nothing here should reach Linear except through
+    `linear_client`.
+
+    `setting_sources` keeps ~/.claude settings out for the same reason: what a
+    session may do should come from this file, not from the machine it is on.
+
+    Passed positionally rather than imported so the SDK import stays lazy, and
+    constructed directly rather than filtered so an SDK too old to know these
+    fields fails loudly instead of quietly running an unrestricted agent.
+    """
+    return options_cls(
+        tools=list(tools),
+        allowed_tools=list(tools),  # already the limit; also skip the prompts
+        mcp_servers={},
+        strict_mcp_config=True,
+        setting_sources=[],
+        permission_mode="acceptEdits",
+        **rest,
+    )
+
+
 def _reporter(
     on_activity: Callable[[Activity], None] | None,
 ) -> Callable[[Any], None]:
@@ -178,10 +219,10 @@ def run_agent(
     except ImportError as exc:  # pragma: no cover - environment dependent
         return AgentRun(error=f"claude-agent-sdk is not installed: {exc}")
 
-    options = ClaudeAgentOptions(
+    options = _options(
+        ClaudeAgentOptions,
+        tools=allowed_tools or DEFAULT_TOOLS,
         system_prompt=system_prompt,
-        allowed_tools=list(allowed_tools or DEFAULT_TOOLS),
-        permission_mode="acceptEdits",
         max_turns=max_turns,
         cwd=str(cwd),
         model=model,
@@ -260,10 +301,10 @@ def run_conversation(
     except ImportError as exc:  # pragma: no cover - environment dependent
         return AgentRun(error=f"claude-agent-sdk is not installed: {exc}")
 
-    options = ClaudeAgentOptions(
+    options = _options(
+        ClaudeAgentOptions,
+        tools=allowed_tools or READ_ONLY_TOOLS,
         system_prompt=system_prompt,
-        allowed_tools=list(allowed_tools or ["Read", "Grep", "Glob"]),
-        permission_mode="acceptEdits",
         max_turns=max_turns,
         cwd=str(cwd),
         model=model,

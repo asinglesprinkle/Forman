@@ -28,6 +28,7 @@ from .review import (
 )
 from .spawn import (
     DEFAULT_MODEL,
+    READ_ONLY_TOOLS,
     Activity,
     AgentRun,
     extract_last_json,
@@ -330,7 +331,7 @@ def push(
         prompt=f"Turn this into Linear tickets:\n\n{prose.strip()}",
         system_prompt=PUSH_CONTRACT,
         cwd=cwd,
-        allowed_tools=["Read", "Grep", "Glob"],
+        allowed_tools=READ_ONLY_TOOLS,
         max_turns=PUSH_MAX_TURNS,
         model=model,
     )
@@ -402,7 +403,7 @@ def push_interactive(
         opening=f"Here is what I want to achieve:\n\n{prose.strip()}",
         respond=respond,
         cwd=cwd,
-        allowed_tools=["Read", "Grep", "Glob"],
+        allowed_tools=READ_ONLY_TOOLS,
         max_rounds=MAX_QUESTION_ROUNDS + 2,
         model=model,
         on_activity=on_activity,
@@ -447,7 +448,7 @@ def push_interactive(
             ),
             respond=lambda _text: None,
             cwd=cwd,
-            allowed_tools=["Read", "Grep", "Glob"],
+            allowed_tools=READ_ONLY_TOOLS,
             max_rounds=1,
             model=model,
             on_activity=on_activity,

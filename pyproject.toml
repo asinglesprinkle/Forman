@@ -6,7 +6,14 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
-    "claude-agent-sdk>=0.1.0",
+    # Floor set by the session lockdown in spawn.py, not by a feature: `tools`,
+    # `strict_mcp_config` and `setting_sources` are what keep an agent inside
+    # the toolset its contract names and away from whatever MCP servers the
+    # machine has configured. An SDK without them raises rather than running an
+    # agent unrestricted, but a version that cannot express the restriction has
+    # no business being installed. 0.2.128 is the version this was verified
+    # against; the fields may well predate it.
+    "claude-agent-sdk>=0.2.128",
 ]
 
 [project.optional-dependencies]

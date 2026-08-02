@@ -18,6 +18,7 @@ from typing import Callable
 from .models import SubTask, SubTaskSpec, Ticket
 from .spawn import (
     DEFAULT_MODEL,
+    READ_ONLY_TOOLS,
     Activity,
     AgentRun,
     extract_last_json,
@@ -234,7 +235,7 @@ def decompose(
         prompt=build_decompose_prompt(ticket, repo_paths),
         system_prompt=DECOMPOSE_CONTRACT,
         cwd=cwd,
-        allowed_tools=["Read", "Grep", "Glob"],  # planning only, no writes
+        allowed_tools=READ_ONLY_TOOLS,  # planning only, no writes
         max_turns=DECOMPOSE_MAX_TURNS,
         model=model,
         on_activity=on_activity,
