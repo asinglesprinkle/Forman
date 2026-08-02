@@ -33,6 +33,7 @@ from .linear_client import LinearClient, StubLinearClient, stub_path
 from .linear_graphql import GraphQLLinearClient, LinearApiError
 from .models import CommitResult, PullRequest, SpawnResult, SubTask, Ticket
 from .orchestrator import Deps, run_once
+from .progress import ask_after_agent, for_terminal
 from .spawn import spawn_agent
 from .state import StateStore, format_cost
 
@@ -112,11 +113,19 @@ def build_linear(repo: Path, backend: str) -> LinearClient:
     )
 
 
-def build_deps(repo: Path, linear: LinearClient) -> Deps:
+def build_deps(repo: Path, linear: LinearClient, progress=None) -> Deps:
     store = StateStore(repo)
 
     def decompose(ticket: Ticket) -> list[SubTask]:
-        return decompose_ticket(ticket=ticket, store=store, cwd=repo)
+        if progress:
+            progress.start(f"{ticket.identifier}: splitting into sub-tasks")
+        try:
+            return decompose_ticket(
+                ticket=ticket, store=store, cwd=repo, on_activity=progress
+            )
+        finally:
+            if progress:
+                progress.done()
 
     def spawn(
         *,
@@ -127,15 +136,25 @@ def build_deps(repo: Path, linear: LinearClient) -> Deps:
         attempt: int = 1,
         previous_error: str | None = None,
     ) -> SpawnResult:
-        return spawn_agent(
-            subtask_readme=readme,
-            parent_ticket=ticket,
-            repo_paths=[str(repo)],
-            sibling_logs=siblings,
-            cwd=repo,
-            attempt=attempt,
-            previous_error=previous_error,
-        )
+        # The longest silence in the whole pipeline: this one edits, runs the
+        # tests and commits, and until now said nothing until it was done.
+        if progress:
+            retry = f" (attempt {attempt})" if attempt > 1 else ""
+            progress.start(f"{subtask.id}: {subtask.goal}{retry}")
+        try:
+            return spawn_agent(
+                subtask_readme=readme,
+                parent_ticket=ticket,
+                repo_paths=[str(repo)],
+                sibling_logs=siblings,
+                cwd=repo,
+                attempt=attempt,
+                previous_error=previous_error,
+                on_activity=progress,
+            )
+        finally:
+            if progress:
+                progress.done()
 
     return Deps(
         linear=linear,
@@ -156,7 +175,9 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     try:
         linear = build_linear(repo, args.linear)
-        report = run_once(build_deps(repo, linear), ticket_id=args.ticket)
+        report = run_once(
+            build_deps(repo, linear, progress=for_terminal()), ticket_id=args.ticket
+        )
     except MissingApiKey as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -235,15 +256,20 @@ def cmd_push(args: argparse.Namespace) -> int:
         print("nothing to push: give prose as an argument or on stdin.", file=sys.stderr)
         return 2
 
+    progress = for_terminal() if interactive else None
+
     try:
         linear = build_linear(repo, args.linear)
         if interactive:
+            if progress:
+                progress.start("reading the repository and drafting")
             tickets = push_interactive(
                 prose=prose,
                 linear=linear,
-                reviewer=TerminalReviewer(ask=_ask_after_agent, show=print),
+                reviewer=TerminalReviewer(ask=ask_after_agent, show=print),
                 edit=_edit_in_editor,
                 cwd=repo,
+                on_activity=progress,
             )
         else:
             tickets = push(
@@ -258,44 +284,13 @@ def cmd_push(args: argparse.Namespace) -> int:
     except (LinearApiError, PushError) as exc:
         print(f"push failed: {exc}", file=sys.stderr)
         return 2
+    finally:
+        # However this ended, the live line comes down before anything prints.
+        if progress:
+            progress.done()
 
     print(summarize(tickets))
     return 0
-
-
-def _drop_typeahead() -> None:
-    """Throw away anything typed before this prompt was on screen.
-
-    The terminal queues keystrokes while an agent works and hands them to the
-    next read. That is fine for a shell and dangerous here: the next read is the
-    review gate, and an empty line at the gate means create. Someone pressing
-    enter at a terminal that looks frozen would be agreeing to drafts that did
-    not exist yet, which is the one thing this gate exists to prevent.
-
-    Only fresh keystrokes count, so the queue is dropped. Not on a pipe: there
-    the queue is the input, and discarding it would eat the answer.
-    """
-    try:
-        if not sys.stdin.isatty():
-            return
-        import termios
-
-        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
-    except Exception:  # pragma: no cover - no tty, or a platform without termios
-        pass
-
-
-def _ask_after_agent(prompt: str) -> str:
-    """Read an answer to something an agent asked, or to the gate it reached.
-
-    Both arrive after a stretch of silence long enough to make a person press
-    keys at it, which is exactly the input that must not be treated as an
-    answer. The prompts in `init` do not go through here: nothing runs before
-    them, so there is nothing queued, and flushing would only discard the
-    keystrokes of someone typing ahead deliberately.
-    """
-    _drop_typeahead()
-    return input(prompt)
 
 
 def _ask(question: str, default: str = "") -> str:

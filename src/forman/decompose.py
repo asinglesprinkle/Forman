@@ -16,7 +16,13 @@ from pathlib import Path
 from typing import Callable
 
 from .models import SubTask, SubTaskSpec, Ticket
-from .spawn import DEFAULT_MODEL, AgentRun, extract_last_json, run_agent
+from .spawn import (
+    DEFAULT_MODEL,
+    Activity,
+    AgentRun,
+    extract_last_json,
+    run_agent,
+)
 from .state import StateStore
 from .topo import CycleError, topo_sort
 
@@ -218,6 +224,7 @@ def decompose(
     repo_paths: list[str] | None = None,
     runner: Callable[..., AgentRun] = run_agent,
     model: str | None = DEFAULT_MODEL,
+    on_activity: Callable[[Activity], None] | None = None,
 ) -> list[SubTask]:
     """Split a ticket, write one README per sub-task, return the seeded list.
 
@@ -230,6 +237,7 @@ def decompose(
         allowed_tools=["Read", "Grep", "Glob"],  # planning only, no writes
         max_turns=DECOMPOSE_MAX_TURNS,
         model=model,
+        on_activity=on_activity,
     )
     if run.error:
         raise DecompositionError(f"decomposer session failed: {run.error}")

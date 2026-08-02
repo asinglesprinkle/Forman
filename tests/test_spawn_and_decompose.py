@@ -161,6 +161,53 @@ def test_spawn_agent_passes_the_contract_and_the_context(tmp_path):
     assert captured["allowed_tools"] == ["Bash", "Edit", "Read", "Grep"]
 
 
+def test_spawn_agent_hands_the_activity_callback_to_the_runner(tmp_path):
+    """The sub-task session is the longest silence in the pipeline. Whatever is
+    watching has to be handed down to it, or the terminal learns nothing."""
+    captured = {}
+    seen: list[Activity] = []
+
+    def fake_runner(**kwargs):
+        captured.update(kwargs)
+        # A real runner reports as it goes; this one reports once.
+        kwargs["on_activity"](Activity(kind="tool", tool="Bash", tool_input={"command": "pytest"}))
+        return AgentRun(text='{"status": "done", "summary": "ok"}')
+
+    spawn_agent(
+        subtask_readme="## Goal\nAdd a helper",
+        parent_ticket=Ticket(identifier="TEAM-7", title="t", description="d"),
+        repo_paths=["/repo"],
+        sibling_logs=[],
+        cwd=tmp_path,
+        runner=fake_runner,
+        on_activity=seen.append,
+    )
+
+    assert captured["on_activity"] is not None
+    assert [describe_activity(a) for a in seen] == ["bash pytest"]
+
+
+def test_decompose_hands_the_activity_callback_to_the_runner(tmp_path):
+    from forman.decompose import decompose
+    from forman.state import StateStore
+
+    seen: list[Activity] = []
+
+    def fake_runner(**kwargs):
+        kwargs["on_activity"](Activity(kind="thinking"))
+        return AgentRun(text='{"subtasks": [{"goal": "do it"}]}')
+
+    decompose(
+        ticket=Ticket(identifier="TEAM-7", title="t", description="d"),
+        store=StateStore(tmp_path),
+        cwd=tmp_path,
+        runner=fake_runner,
+        on_activity=seen.append,
+    )
+
+    assert [describe_activity(a) for a in seen] == ["thinking"]
+
+
 # -- decomposition -----------------------------------------------------------
 
 

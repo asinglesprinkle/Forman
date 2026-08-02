@@ -105,7 +105,45 @@ class AgentRunner(Protocol):
         allowed_tools: list[str] | None = ...,
         max_turns: int = ...,
         model: str | None = ...,
+        on_activity: Callable[[Activity], None] | None = ...,
     ) -> AgentRun: ...
+
+
+def _reporter(
+    on_activity: Callable[[Activity], None] | None,
+) -> Callable[[Any], None]:
+    """Turn a message's content blocks into Activity, and report them.
+
+    Shared by both runners because both watch the same stream for the same
+    reason. Errors from the callback are swallowed deliberately: a progress
+    display must never be able to kill a session that is midway through
+    creating things.
+    """
+    if on_activity is None:
+        return lambda _blocks: None
+
+    def report(blocks: Any) -> None:
+        try:
+            from claude_agent_sdk import (  # type: ignore[import-not-found]
+                ThinkingBlock,
+                ToolUseBlock,
+            )
+
+            for block in blocks:
+                if isinstance(block, ToolUseBlock):
+                    on_activity(
+                        Activity(
+                            kind="tool",
+                            tool=block.name,
+                            tool_input=dict(block.input or {}),
+                        )
+                    )
+                elif isinstance(block, ThinkingBlock):
+                    on_activity(Activity(kind="thinking"))
+        except Exception:  # pragma: no cover - a broken display, not a broken run
+            pass
+
+    return report
 
 
 # -- the only place the SDK is imported --------------------------------------
@@ -119,11 +157,16 @@ def run_agent(
     allowed_tools: list[str] | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
     model: str | None = DEFAULT_MODEL,
+    on_activity: Callable[[Activity], None] | None = None,
 ) -> AgentRun:
     """Run one fresh Claude Agent SDK session and collect its output.
 
     Imported lazily so the rest of the pipeline (and the whole test suite) runs
     without claude-agent-sdk installed.
+
+    `on_activity` is called as the agent works. A sub-task session is the
+    longest-running thing here by far - it edits, runs tests, and commits - and
+    it says nothing at all until it is finished.
     """
     try:
         from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -144,12 +187,15 @@ def run_agent(
         model=model,
     )
 
+    report = _reporter(on_activity)
+
     async def _collect() -> AgentRun:
         run = AgentRun()
         chunks: list[str] = []
         try:
             async for message in query(prompt=prompt, options=options):
                 if isinstance(message, AssistantMessage):
+                    report(message.content)
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             chunks.append(block.text)
@@ -210,8 +256,6 @@ def run_conversation(
             ClaudeAgentOptions,
             ClaudeSDKClient,
             TextBlock,
-            ThinkingBlock,
-            ToolUseBlock,
         )
     except ImportError as exc:  # pragma: no cover - environment dependent
         return AgentRun(error=f"claude-agent-sdk is not installed: {exc}")
@@ -225,15 +269,7 @@ def run_conversation(
         model=model,
     )
 
-    def _report(activity: Activity) -> None:
-        # A progress display must never be able to kill a session that is midway
-        # through creating things. Drop its errors on the floor deliberately.
-        if on_activity is None:
-            return
-        try:
-            on_activity(activity)
-        except Exception:  # pragma: no cover - a broken display, not a broken run
-            pass
+    report = _reporter(on_activity)
 
     async def _talk() -> AgentRun:
         run = AgentRun()
@@ -245,19 +281,10 @@ def run_conversation(
                     chunks: list[str] = []
                     async for message in client.receive_response():
                         if isinstance(message, AssistantMessage):
+                            report(message.content)
                             for block in message.content:
                                 if isinstance(block, TextBlock):
                                     chunks.append(block.text)
-                                elif isinstance(block, ToolUseBlock):
-                                    _report(
-                                        Activity(
-                                            kind="tool",
-                                            tool=block.name,
-                                            tool_input=dict(block.input or {}),
-                                        )
-                                    )
-                                elif isinstance(block, ThinkingBlock):
-                                    _report(Activity(kind="thinking"))
                             continue
                         for attr in ("session_id", "total_cost_usd"):
                             value = getattr(message, attr, None)
@@ -484,6 +511,7 @@ def spawn_agent(
     max_turns: int = DEFAULT_MAX_TURNS,
     model: str | None = DEFAULT_MODEL,
     runner: AgentRunner | Callable[..., AgentRun] = run_agent,
+    on_activity: Callable[[Activity], None] | None = None,
 ) -> SpawnResult:
     """Run one sub-task in a fresh agent session and report the outcome."""
     prompt = build_subtask_prompt(
@@ -501,5 +529,6 @@ def spawn_agent(
         allowed_tools=DEFAULT_TOOLS,
         max_turns=max_turns,
         model=model,
+        on_activity=on_activity,
     )
     return result_from_run(run)

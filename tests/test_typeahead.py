@@ -25,9 +25,9 @@ CHILD = textwrap.dedent(
     """
     import sys, time
     sys.path.insert(0, {src!r})
-    from forman.cli import _ask_after_agent
+    from forman.progress import ask_after_agent
     time.sleep(1.0)                       # the agent, working, saying nothing
-    got = _ask_after_agent("[c]reate, [e]dit, [q]uit, or feedback: ")
+    got = ask_after_agent("[c]reate, [e]dit, [q]uit, or feedback: ")
     sys.stderr.write("GOT[" + got + "]\\n")
     sys.stderr.flush()
     """
@@ -61,10 +61,11 @@ def _gate_receives(*, impatient: bytes, then: bytes) -> str:
         proc.wait(timeout=15)
     finally:
         os.close(main)
-    for line in err.splitlines():
-        if line.startswith("GOT["):
-            return line[len("GOT[") : -1]
-    raise AssertionError(f"the gate never answered: {err!r}")
+    # The prompt is written to the same stream, so GOT[...] can share its line.
+    marker = err.find("GOT[")
+    if marker == -1:
+        raise AssertionError(f"the gate never answered: {err!r}")
+    return err[marker + len("GOT[") : err.index("]\n", marker)]
 
 
 def test_enter_pressed_while_the_agent_works_does_not_reach_the_gate():
