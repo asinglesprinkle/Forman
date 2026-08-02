@@ -36,6 +36,20 @@ from .orchestrator import Deps, run_once
 from .spawn import spawn_agent
 from .state import StateStore, format_cost
 
+# Imported for its import side effect, not for anything it exports: this is what
+# makes `input()` use GNU readline instead of the terminal driver's canonical
+# mode. The driver erases with backspace-space-backspace, which cannot cross a
+# row boundary, so editing a line that has wrapped stops dead at the start of
+# the current visual row - the characters go, the display does not follow. The
+# prose prompt in `forman push` invites exactly the input that wraps. Readline
+# also brings arrow keys, ^A/^E/^W/^U, and recall within a run.
+#
+# Do not "clean up" this import. Not available on every build, hence the guard.
+try:  # pragma: no cover - presence is a property of the interpreter build
+    import readline  # noqa: F401
+except ImportError:  # pragma: no cover
+    pass
+
 
 class GitAdapter:
     """git_ops bound to one repo, satisfying the orchestrator's GitPort."""
