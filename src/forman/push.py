@@ -28,6 +28,7 @@ from .review import (
 )
 from .spawn import (
     DEFAULT_MODEL,
+    Activity,
     AgentRun,
     extract_last_json,
     run_agent,
@@ -360,6 +361,7 @@ def push_interactive(
     cwd: str | Path = ".",
     conversation: Callable[..., AgentRun] = run_conversation,
     model: str | None = DEFAULT_MODEL,
+    on_activity: Callable[[Activity], None] | None = None,
 ) -> list[Ticket]:
     """Talk it through, show the draft, then create only once told to.
 
@@ -373,6 +375,10 @@ def push_interactive(
     The human side is a `Reviewer`. Passing `ask` and `show` instead builds a
     `TerminalReviewer` from them, which is what every caller did before the port
     existed and does exactly what it did then.
+
+    `on_activity` is passed straight to the conversation, so a caller driving
+    this in a loop (Red, one slice at a time) can show that the agent is working
+    rather than leaving a slice heading on screen above a silent terminal.
     """
     if reviewer is None:
         if ask is None or show is None:
@@ -399,6 +405,7 @@ def push_interactive(
         allowed_tools=["Read", "Grep", "Glob"],
         max_rounds=MAX_QUESTION_ROUNDS + 2,
         model=model,
+        on_activity=on_activity,
     )
     if run.error:
         raise PushError(f"push session failed: {run.error}")
@@ -443,6 +450,7 @@ def push_interactive(
             allowed_tools=["Read", "Grep", "Glob"],
             max_rounds=1,
             model=model,
+            on_activity=on_activity,
         )
         if run.error:
             raise PushError(f"redraft failed: {run.error}")
