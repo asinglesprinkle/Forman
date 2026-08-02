@@ -241,7 +241,7 @@ def cmd_push(args: argparse.Namespace) -> int:
             tickets = push_interactive(
                 prose=prose,
                 linear=linear,
-                reviewer=TerminalReviewer(ask=lambda prompt: input(prompt), show=print),
+                reviewer=TerminalReviewer(ask=_ask_after_agent, show=print),
                 edit=_edit_in_editor,
                 cwd=repo,
             )
@@ -261,6 +261,41 @@ def cmd_push(args: argparse.Namespace) -> int:
 
     print(summarize(tickets))
     return 0
+
+
+def _drop_typeahead() -> None:
+    """Throw away anything typed before this prompt was on screen.
+
+    The terminal queues keystrokes while an agent works and hands them to the
+    next read. That is fine for a shell and dangerous here: the next read is the
+    review gate, and an empty line at the gate means create. Someone pressing
+    enter at a terminal that looks frozen would be agreeing to drafts that did
+    not exist yet, which is the one thing this gate exists to prevent.
+
+    Only fresh keystrokes count, so the queue is dropped. Not on a pipe: there
+    the queue is the input, and discarding it would eat the answer.
+    """
+    try:
+        if not sys.stdin.isatty():
+            return
+        import termios
+
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception:  # pragma: no cover - no tty, or a platform without termios
+        pass
+
+
+def _ask_after_agent(prompt: str) -> str:
+    """Read an answer to something an agent asked, or to the gate it reached.
+
+    Both arrive after a stretch of silence long enough to make a person press
+    keys at it, which is exactly the input that must not be treated as an
+    answer. The prompts in `init` do not go through here: nothing runs before
+    them, so there is nothing queued, and flushing would only discard the
+    keystrokes of someone typing ahead deliberately.
+    """
+    _drop_typeahead()
+    return input(prompt)
 
 
 def _ask(question: str, default: str = "") -> str:
