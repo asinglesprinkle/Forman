@@ -1,6 +1,6 @@
 """Ticket -> local sub-tasks.
 
-LOCKED: sub-tasks are local only. They are files under `.foreman/<TICKET>/` plus
+LOCKED: sub-tasks are local only. They are files under `.forman/<TICKET>/` plus
 entries in state.json, and they are never pushed to Linear. Linear only ever
 sees tickets.
 

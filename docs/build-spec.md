@@ -1,10 +1,10 @@
 # Original build spec
 
-> Kept for provenance. This is the specification Foreman was built from, not
+> Kept for provenance. This is the specification Forman was built from, not
 > documentation of what it does now. Several decisions moved during the build:
 > the tool runs from inside the target repo rather than using a `work/` dir,
 > branches are named `<team-key>-<number>/<title-slug>` rather than `ai/<ticket>`,
-> bookkeeping lives in `.foreman/`, and Linear is reached over its GraphQL API.
+> bookkeeping lives in `.forman/`, and Linear is reached over its GraphQL API.
 > Read the README for how the shipped tool actually behaves.
 
 This is a build specification for **Claude Code**. Read it fully, then scaffold the
@@ -87,7 +87,7 @@ These were decided deliberately. Do not change them without asking.
 ## Repo layout to create
 
 ```
-foreman/
+forman/
   README.md                  # a NORMAL repo readme (not this spec) — usage, setup
   pyproject.toml
   flake.nix                  # optional dev shell

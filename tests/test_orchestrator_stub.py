@@ -7,8 +7,8 @@ No network, no git, no SDK.
 
 import pytest
 
-from foreman.linear_client import StubLinearClient
-from foreman.models import (
+from forman.linear_client import StubLinearClient
+from forman.models import (
     CommitResult,
     PullRequest,
     SpawnResult,
@@ -17,8 +17,8 @@ from foreman.models import (
     Ticket,
     TicketStatus,
 )
-from foreman.orchestrator import Deps, run_once, select_ticket
-from foreman.state import StateStore
+from forman.orchestrator import Deps, run_once, select_ticket
+from forman.state import StateStore
 
 
 # -- fakes -------------------------------------------------------------------
@@ -47,7 +47,7 @@ class FakeGit:
         return "main"
 
     def branch_name(self, identifier: str, title: str) -> str:
-        from foreman.git_ops import branch_name
+        from forman.git_ops import branch_name
 
         return branch_name(identifier, title)
 
@@ -391,7 +391,7 @@ def test_halted_report_still_carries_the_total(tmp_path):
 
 
 def test_total_is_zero_when_no_costs_were_recorded(tmp_path):
-    # The spawn fake returns results with no cost at all, as an older Foreman or
+    # The spawn fake returns results with no cost at all, as an older Forman or
     # a stubbed session would. Reporting must not crash or invent a figure.
     deps, store, *_ = make_deps(tmp_path, TWO_STEP)
 

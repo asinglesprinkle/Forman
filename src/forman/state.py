@@ -6,7 +6,7 @@ disagree, state.json wins and the next save fixes the manifest.
 
 Layout, inside the TARGET repo:
 
-    .foreman/
+    .forman/
       <TICKET>/
         state.json
         manifest.md
@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .models import SubTask, SubTaskStatus, TicketState
 
-FOREMAN_DIR = ".foreman"
+FORMAN_DIR = ".forman"
 STATE_FILE = "state.json"
 MANIFEST_FILE = "manifest.md"
 
@@ -45,7 +45,7 @@ class StateStore:
 
     @property
     def root(self) -> Path:
-        return self.repo_root / FOREMAN_DIR
+        return self.repo_root / FORMAN_DIR
 
     def dir_for(self, ticket: str) -> Path:
         return self.root / ticket
@@ -146,7 +146,7 @@ def total_cost_usd(state: TicketState) -> float:
     RunReport both call this, so the manifest and the report can never disagree.
 
     A sub-task with no recorded cost counts as zero: that is either a sub-task
-    that has not run yet, or one written by a Foreman old enough not to have
+    that has not run yet, or one written by a Forman old enough not to have
     captured the figure. Neither is worth refusing to add up. Rounded because
     summing floats otherwise produces things like 0.30000000000000004.
     """

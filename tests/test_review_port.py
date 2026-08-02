@@ -1,6 +1,6 @@
 """The review port, and the promise that it did not change the terminal.
 
-push_interactive grew a typed Reviewer so that something embedding Foreman can
+push_interactive grew a typed Reviewer so that something embedding Forman can
 tell a question apart from an approval without matching prompt strings. The
 first test here is the one that matters: the old ask/show call still produces
 the same transcript it always did.
@@ -12,10 +12,10 @@ import json
 
 import pytest
 
-from foreman.linear_client import StubLinearClient
-from foreman.models import Ticket
-from foreman.push import Aborted, PushError, push_interactive
-from foreman.review import (
+from forman.linear_client import StubLinearClient
+from forman.models import Ticket
+from forman.push import Aborted, PushError, push_interactive
+from forman.review import (
     Approval,
     Decision,
     Question,
@@ -23,7 +23,7 @@ from foreman.review import (
     TerminalReviewer,
     parse_decision,
 )
-from foreman.spawn import AgentRun
+from forman.spawn import AgentRun
 
 DRAFT = json.dumps(
     {

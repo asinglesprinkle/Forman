@@ -7,8 +7,8 @@ would quietly corrupt the ticket-level topo-sort if it were backwards.
 
 import pytest
 
-from foreman.config import load_settings, parse_env
-from foreman.linear_graphql import (
+from forman.config import load_settings, parse_env
+from forman.linear_graphql import (
     PAGE_SIZE,
     GraphQLLinearClient,
     LinearApiError,
@@ -16,7 +16,7 @@ from foreman.linear_graphql import (
     _ticket_from_node,
     split_identifier,
 )
-from foreman.models import Ticket
+from forman.models import Ticket
 
 
 class FakeTransport:
@@ -133,7 +133,7 @@ def test_completed_tickets_are_filtered_out_of_list_assigned():
 
 
 def test_in_review_tickets_are_returned_but_the_orchestrator_skips_them():
-    from foreman.orchestrator import select_ticket
+    from forman.orchestrator import select_ticket
 
     c = client(assigned_response([issue_node("TEAM-7", state=("In Review", "started"))]))
     tickets = c.list_assigned()
@@ -401,8 +401,8 @@ def test_shell_environment_beats_the_env_file(tmp_path, monkeypatch):
 def test_repo_env_beats_the_user_config(tmp_path, monkeypatch):
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     home = tmp_path / "config"
-    (home / "foreman").mkdir(parents=True)
-    (home / "foreman" / ".env").write_text("LINEAR_API_KEY=from_user_config\n")
+    (home / "forman").mkdir(parents=True)
+    (home / "forman" / ".env").write_text("LINEAR_API_KEY=from_user_config\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
 
     repo = tmp_path / "repo"

@@ -198,7 +198,7 @@ def to_tickets(raw: list[dict]) -> list[Ticket]:
 
 # -- draft rendering and round-tripping --------------------------------------
 
-TICKET_SEPARATOR = "<!-- foreman:ticket -->"
+TICKET_SEPARATOR = "<!-- forman:ticket -->"
 
 
 def _fmt_list(values: list[str]) -> str:

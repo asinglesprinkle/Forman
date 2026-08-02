@@ -51,7 +51,7 @@ _ISSUE_FIELDS = """
 """
 
 _ASSIGNED_QUERY = f"""
-query ForemanAssigned($first: Int!) {{
+query FormanAssigned($first: Int!) {{
   viewer {{
     id
     name
@@ -66,7 +66,7 @@ query ForemanAssigned($first: Int!) {{
 """
 
 _BY_IDENTIFIER_QUERY = f"""
-query ForemanIssue($number: Float!, $teamKey: String!) {{
+query FormanIssue($number: Float!, $teamKey: String!) {{
   issues(
     first: 1
     filter: {{ number: {{ eq: $number }}, team: {{ key: {{ eq: $teamKey }} }} }}
@@ -77,7 +77,7 @@ query ForemanIssue($number: Float!, $teamKey: String!) {{
 """
 
 _TEAM_STATES_QUERY = """
-query ForemanStates($teamKey: String!) {
+query FormanStates($teamKey: String!) {
   teams(first: 1, filter: { key: { eq: $teamKey } }) {
     nodes {
       id
@@ -91,7 +91,7 @@ query ForemanStates($teamKey: String!) {
 """
 
 _ASSIGNED_TO_QUERY = f"""
-query ForemanAssignedTo($first: Int!, $userId: ID!) {{
+query FormanAssignedTo($first: Int!, $userId: ID!) {{
   issues(
     first: $first
     filter: {{
@@ -106,33 +106,33 @@ query ForemanAssignedTo($first: Int!, $userId: ID!) {{
 """
 
 _VIEWER_QUERY = """
-query ForemanViewer { viewer { id name displayName email } }
+query FormanViewer { viewer { id name displayName email } }
 """
 
 _USERS_QUERY = """
-query ForemanUsers {
+query FormanUsers {
   users(first: 250) { nodes { id name displayName email active } }
 }
 """
 
 _TEAMS_QUERY = """
-query ForemanTeams { teams(first: 50) { nodes { id key name } } }
+query FormanTeams { teams(first: 50) { nodes { id key name } } }
 """
 
 _COMMENT_MUTATION = """
-mutation ForemanComment($issueId: String!, $body: String!) {
+mutation FormanComment($issueId: String!, $body: String!) {
   commentCreate(input: { issueId: $issueId, body: $body }) { success }
 }
 """
 
 _UPDATE_STATE_MUTATION = """
-mutation ForemanSetState($issueId: String!, $stateId: String!) {
+mutation FormanSetState($issueId: String!, $stateId: String!) {
   issueUpdate(id: $issueId, input: { stateId: $stateId }) { success }
 }
 """
 
 _CREATE_MUTATION = """
-mutation ForemanCreate($input: IssueCreateInput!) {
+mutation FormanCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
     success
     issue { id identifier url }
@@ -141,7 +141,7 @@ mutation ForemanCreate($input: IssueCreateInput!) {
 """
 
 _RELATION_MUTATION = """
-mutation ForemanRelate($issueId: String!, $relatedIssueId: String!) {
+mutation FormanRelate($issueId: String!, $relatedIssueId: String!) {
   issueRelationCreate(
     input: { issueId: $issueId, relatedIssueId: $relatedIssueId, type: blocks }
   ) { success }
@@ -149,7 +149,7 @@ mutation ForemanRelate($issueId: String!, $relatedIssueId: String!) {
 """
 
 _PROJECTS_QUERY = """
-query ForemanProjects { projects(first: 100) { nodes { id name } } }
+query FormanProjects { projects(first: 100) { nodes { id name } } }
 """
 
 
@@ -261,7 +261,7 @@ class GraphQLLinearClient:
                 "Content-Type": "application/json",
                 # No `Bearer` prefix: that is for OAuth tokens, not personal keys.
                 "Authorization": self.api_key,
-                "User-Agent": "foreman/0.1",
+                "User-Agent": "forman/0.1",
             },
             method="POST",
         )
@@ -519,7 +519,7 @@ class GraphQLLinearClient:
     # -- diagnostics ---------------------------------------------------------
 
     def check(self) -> dict[str, Any]:
-        """One read-only round trip used by `foreman doctor`.
+        """One read-only round trip used by `forman doctor`.
 
         Every schema assumption in this file shows up in the output, so a
         mismatch is visible immediately rather than mid-run.

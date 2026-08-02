@@ -3,15 +3,15 @@ sub-tasks, naming branches. No SDK, no git, no network."""
 
 import pytest
 
-from foreman.decompose import (
+from forman.decompose import (
     DecompositionError,
     order_and_number,
     parse_decomposition,
     render_subtask_readme,
 )
-from foreman.git_ops import branch_name, slugify
-from foreman.models import SubTaskSpec, SubTaskStatus, Ticket
-from foreman.spawn import AgentRun, extract_last_json, result_from_run, spawn_agent
+from forman.git_ops import branch_name, slugify
+from forman.models import SubTaskSpec, SubTaskStatus, Ticket
+from forman.spawn import AgentRun, extract_last_json, result_from_run, spawn_agent
 
 
 # -- reading what the agent said ---------------------------------------------

@@ -1,11 +1,11 @@
 """Configuration and secrets.
 
-The Linear API key is per-person, not per-repo, but Foreman runs from inside
+The Linear API key is per-person, not per-repo, but Forman runs from inside
 whichever repo you point it at. So the key is looked up in this order:
 
   1. the environment (LINEAR_API_KEY)
   2. `.env` in the target repo
-  3. `~/.config/foreman/.env`
+  3. `~/.config/forman/.env`
 
 Put it in (3) once and every repo you run from picks it up. Use (2) when a
 particular repo needs a different key, for example a work board and a personal
@@ -46,7 +46,7 @@ class MissingApiKey(RuntimeError):
 
 def user_config_dir() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME")
-    return (Path(base) if base else Path.home() / ".config") / "foreman"
+    return (Path(base) if base else Path.home() / ".config") / "forman"
 
 
 def parse_env(text: str) -> dict[str, str]:
@@ -85,7 +85,7 @@ def load_env(repo_root: str | Path | None = None) -> dict[str, str]:
     """Merge the real environment over any .env files found.
 
     A value already exported in the shell always wins, so a one-off
-    `LINEAR_API_KEY=... foreman pull` overrides the file without editing it.
+    `LINEAR_API_KEY=... forman pull` overrides the file without editing it.
     """
     values: dict[str, str] = {}
     for path in reversed(env_files(repo_root)):  # nearest file wins
@@ -121,7 +121,7 @@ def mask(secret: str) -> str:
 def render_env(values: dict[str, str]) -> str:
     """Render a .env file. Only known variables, only non-empty ones."""
     lines = [
-        "# Written by `foreman init`. Safe to edit by hand.",
+        "# Written by `forman init`. Safe to edit by hand.",
         "# Docs: https://linear.app/settings/api for the API key.",
         "",
     ]

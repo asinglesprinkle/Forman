@@ -1,11 +1,11 @@
-"""`foreman` command line entry point.
+"""`forman` command line entry point.
 
 Run it from inside the target repo. cwd is the codebase; bookkeeping lands in
-`.foreman/<TICKET>/` there and is kept out of commits via .git/info/exclude.
+`.forman/<TICKET>/` there and is kept out of commits via .git/info/exclude.
 Working more than one board just means running it from more than one directory.
 
-    cd ~/code/service-a && foreman pull   # branch <team-key>-<number>/<slug>
-    cd ~/code/service-b && foreman pull   # a different board, same command
+    cd ~/code/service-a && forman pull   # branch <team-key>-<number>/<slug>
+    cd ~/code/service-b && forman pull   # a different board, same command
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def resolve_repo(path: str | Path | None) -> Path:
     start = Path(path or Path.cwd()).resolve()
     if not git_ops.is_repo(start):
         raise SystemExit(
-            f"{start} is not a git repository. Run foreman from inside the "
+            f"{start} is not a git repository. Run forman from inside the "
             "codebase you want it to work on."
         )
     return git_ops.repo_root(start)
@@ -151,7 +151,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
         return 2
     except git_ops.DirtyWorktree as exc:
         print(f"refusing to start: {exc}", file=sys.stderr)
-        print("commit or stash your changes, then run foreman again.", file=sys.stderr)
+        print("commit or stash your changes, then run forman again.", file=sys.stderr)
         return 2
     except git_ops.GitError as exc:
         print(f"git failed: {exc}", file=sys.stderr)
@@ -273,7 +273,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     target = user_config_dir() / ENV_FILE
     existing = load_settings(None)
 
-    print("Foreman setup")
+    print("Forman setup")
     print(f"Writing to {target}\n")
 
     if target.is_file() and not args.force:
@@ -322,7 +322,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     except LinearApiError as exc:
         sys.stdout.flush()
         print(f"\nThat key did not work: {exc}", file=sys.stderr)
-        print("Nothing written. Run `foreman init` again to retry.", file=sys.stderr)
+        print("Nothing written. Run `forman init` again to retry.", file=sys.stderr)
         return 1
     print(f"  authenticated as {viewer.get('email') or viewer.get('name')}\n")
 
@@ -336,7 +336,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         team_key = keys[0]
     else:
         print(f"Teams visible: {', '.join(keys)}")
-        print("Foreman needs one to create issues on with `foreman push`.")
+        print("Forman needs one to create issues on with `forman push`.")
         team_key = existing.team_key or keys[0]
         if sys.stdin.isatty():
             team_key = _ask("Which team key", default=team_key)
@@ -354,7 +354,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"Team {team_key} has no state that looks like 'in review'.")
         print(f"  states: {', '.join(names)}")
         print(
-            "Foreman still opens the PR and comments the link; it just cannot\n"
+            "Forman still opens the PR and comments the link; it just cannot\n"
             "move the ticket. Add an 'In Review' state under the Started group\n"
             "in Linear, or name an existing state to use instead."
         )
@@ -372,13 +372,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     written = write_user_env(values, target)
     print(f"Wrote {written} (permissions 0600)\n")
     print("Next:")
-    print("  foreman doctor                  # confirm what Foreman can see")
-    print("  cd <your repo> && foreman pull  # work your next ticket")
+    print("  forman doctor                  # confirm what Forman can see")
+    print("  cd <your repo> && forman pull  # work your next ticket")
     return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Prove the API key works and show what Foreman can actually see.
+    """Prove the API key works and show what Forman can actually see.
 
     Read-only. Run this once after setting up the key, before letting the
     pipeline touch a real ticket.
@@ -425,7 +425,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    """Clear a halted run so `foreman pull` will pick it back up.
+    """Clear a halted run so `forman pull` will pick it back up.
 
     The loop never resets a failed or blocked sub-task by itself: both mean a
     human has to look at something. This command is that human saying they
@@ -439,7 +439,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
     if not store.exists(args.ticket):
         known = ", ".join(store.tickets()) or "(none)"
         print(
-            f"no foreman state for {args.ticket} in this repo. Known: {known}",
+            f"no forman state for {args.ticket} in this repo. Known: {known}",
             file=sys.stderr,
         )
         return 2
@@ -451,7 +451,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         done = len(state.done_ids())
         print(f"{args.ticket}: nothing to reset ({done}/{len(state.subtasks)} done).")
         if state.all_done():
-            print("Everything finished. Run `foreman pull` to open the PR.")
+            print("Everything finished. Run `forman pull` to open the PR.")
         return 0
 
     store.save(state)
@@ -463,7 +463,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
     if not status.clean:
         sys.stdout.flush()  # stderr is unbuffered and would jump the queue
         print(
-            "\nThe working tree is dirty, so `foreman pull` will refuse to start:",
+            "\nThe working tree is dirty, so `forman pull` will refuse to start:",
             file=sys.stderr,
         )
         for path in status.files[:10]:
@@ -475,7 +475,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(f"\nNext:  foreman pull --ticket {args.ticket}")
+    print(f"\nNext:  forman pull --ticket {args.ticket}")
     return 0
 
 
@@ -484,7 +484,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     store = StateStore(repo)
     tickets = store.tickets()
     if not tickets:
-        print("no foreman state in this repo yet.")
+        print("no forman state in this repo yet.")
         return 0
     for ticket in tickets:
         state = store.load(ticket)
@@ -494,7 +494,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="foreman", description=__doc__)
+    parser = argparse.ArgumentParser(prog="forman", description=__doc__)
     parser.add_argument(
         "--repo", default=None, help="target repo (defaults to the current directory)"
     )
@@ -512,7 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ticket",
         default=None,
         metavar="ID",
-        help="work this exact ticket (e.g. TEAM-42) instead of letting Foreman "
+        help="work this exact ticket (e.g. TEAM-42) instead of letting Forman "
         "choose. Skips the readiness checks.",
     )
     p_pull.set_defaults(func=cmd_pull)
@@ -530,7 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_push.set_defaults(func=cmd_push)
 
-    p_status = sub.add_parser("status", help="show foreman state in this repo")
+    p_status = sub.add_parser("status", help="show forman state in this repo")
     p_status.set_defaults(func=cmd_status)
 
     p_init = sub.add_parser(
@@ -553,7 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_resume.set_defaults(func=cmd_resume)
 
     p_doctor = sub.add_parser(
-        "doctor", help="check the Linear API key and show what Foreman can see"
+        "doctor", help="check the Linear API key and show what Forman can see"
     )
     p_doctor.set_defaults(func=cmd_doctor)
 

@@ -1,10 +1,10 @@
-"""`foreman init` writes the per-user config, and writes it safely."""
+"""`forman init` writes the per-user config, and writes it safely."""
 
 import stat
 
 import pytest
 
-from foreman.config import (
+from forman.config import (
     API_KEY_VAR,
     REVIEW_STATE_VAR,
     TEAM_KEY_VAR,

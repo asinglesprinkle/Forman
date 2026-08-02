@@ -5,9 +5,9 @@ whole ticket over one is needless. An external blocker will not resolve itself,
 so retrying it just burns tokens to get the same answer.
 """
 
-from foreman.models import SpawnResult, SubTaskStatus, Ticket
-from foreman.orchestrator import run_once
-from foreman.spawn import build_subtask_prompt
+from forman.models import SpawnResult, SubTaskStatus, Ticket
+from forman.orchestrator import run_once
+from forman.spawn import build_subtask_prompt
 
 from test_orchestrator_stub import TWO_STEP, make_deps
 

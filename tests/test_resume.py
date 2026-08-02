@@ -7,10 +7,10 @@ because nothing moves a failed sub-task back to pending.
 
 import pytest
 
-from foreman.models import SpawnResult, SubTask, SubTaskStatus, TicketState
-from foreman.orchestrator import run_once
-from foreman.spawn import AgentRun, is_retryable, result_from_run
-from foreman.state import StateStore, next_ready_subtask, reset_for_resume
+from forman.models import SpawnResult, SubTask, SubTaskStatus, TicketState
+from forman.orchestrator import run_once
+from forman.spawn import AgentRun, is_retryable, result_from_run
+from forman.state import StateStore, next_ready_subtask, reset_for_resume
 
 from test_orchestrator_stub import TWO_STEP, make_deps
 from test_retry import RecordingSpawn
@@ -117,7 +117,7 @@ def test_a_resumed_run_only_reruns_what_failed(tmp_path):
     deps, _store, linear, git = make_deps(tmp_path, TWO_STEP)
     deps.store = store
     deps.spawn = spawn
-    from foreman.models import Ticket
+    from forman.models import Ticket
 
     deps.linear.tickets = {
         "TEAM-35": Ticket(identifier="TEAM-35", title="Persist and report agent session cost")
@@ -214,7 +214,7 @@ def test_dirty_file_names_are_not_truncated(tmp_path):
     off the first filename, in every dirty-tree message."""
     import subprocess
 
-    from foreman.git_ops import worktree_status
+    from forman.git_ops import worktree_status
 
     def sh(*args):
         subprocess.run(args, cwd=tmp_path, capture_output=True, check=True)

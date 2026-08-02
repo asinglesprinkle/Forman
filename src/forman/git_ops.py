@@ -161,7 +161,7 @@ def sync_default_branch(repo: str | Path) -> str:
 def create_branch(repo: str | Path, name: str) -> str:
     """Create the ticket branch, or switch to it if a previous run made it.
 
-    Re-runs are expected: the human resolves a blocker and runs foreman again.
+    Re-runs are expected: the human resolves a blocker and runs forman again.
     """
     if branch_exists(repo, name):
         _run(repo, "checkout", name)
@@ -170,8 +170,8 @@ def create_branch(repo: str | Path, name: str) -> str:
     return name
 
 
-def ensure_ignored(repo: str | Path, entry: str = ".foreman/") -> bool:
-    """Keep Foreman's bookkeeping out of the target repo's commits.
+def ensure_ignored(repo: str | Path, entry: str = ".forman/") -> bool:
+    """Keep Forman's bookkeeping out of the target repo's commits.
 
     Written to `.git/info/exclude` rather than `.gitignore` on purpose: this is
     our tooling's business, not a change to the project's tracked files.
@@ -188,7 +188,7 @@ def ensure_ignored(repo: str | Path, entry: str = ".foreman/") -> bool:
         return False
     prefix = "" if existing.endswith("\n") or not existing else "\n"
     exclude.write_text(
-        existing + prefix + f"# added by foreman\n{entry}\n", encoding="utf-8"
+        existing + prefix + f"# added by forman\n{entry}\n", encoding="utf-8"
     )
     return True
 

@@ -1,13 +1,13 @@
 """Forcing a specific ticket, and surviving a board with no review state.
 
-Both of these exist because of what `foreman doctor` turned up on a real
+Both of these exist because of what `forman doctor` turned up on a real
 workspace: left to itself the selector would have grabbed live work, and plenty
 of boards have no in-review state for the gate to move a ticket into.
 """
 
-from foreman.linear_client import StubLinearClient
-from foreman.models import Ticket, TicketStatus
-from foreman.orchestrator import run_once
+from forman.linear_client import StubLinearClient
+from forman.models import Ticket, TicketStatus
+from forman.orchestrator import run_once
 
 from test_orchestrator_stub import TWO_STEP, FakeGit, make_deps
 
@@ -25,7 +25,7 @@ class NoReviewStateLinear(StubLinearClient):
 def test_forced_ticket_beats_the_selector(tmp_path):
     tickets = [
         Ticket(identifier="TEAM-30", title="Real work in progress", priority="urgent"),
-        Ticket(identifier="TEAM-31", title="Foreman smoke test", priority="low"),
+        Ticket(identifier="TEAM-31", title="Forman smoke test", priority="low"),
     ]
     deps, store, linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
 
@@ -36,7 +36,7 @@ def test_forced_ticket_beats_the_selector(tmp_path):
 def test_forced_ticket_is_worked_even_when_lower_priority(tmp_path):
     tickets = [
         Ticket(identifier="TEAM-30", title="Real work in progress", priority="urgent"),
-        Ticket(identifier="TEAM-31", title="Foreman smoke test", priority="low"),
+        Ticket(identifier="TEAM-31", title="Forman smoke test", priority="low"),
     ]
     goals = [("do the thing", []), ("do the other thing", ["TEAM-31.01"])]
     deps, store, linear, git = make_deps(tmp_path, goals, tickets=tickets)
@@ -45,7 +45,7 @@ def test_forced_ticket_is_worked_even_when_lower_priority(tmp_path):
 
     assert report.ticket == "TEAM-31"
     assert report.outcome == "in_review"
-    assert report.branch == "team-31/foreman-smoke-test"
+    assert report.branch == "team-31/forman-smoke-test"
     # The urgent ticket was never touched.
     assert not store.exists("TEAM-30")
 

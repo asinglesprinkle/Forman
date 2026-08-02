@@ -88,7 +88,7 @@ class SubTask:
     finished_at: str | None = None
     # Recorded from the SpawnResult of the session that ran this sub-task.
     # Both stay None until a session finishes, and for sub-tasks written by a
-    # Foreman old enough not to have captured them.
+    # Forman old enough not to have captured them.
     session_id: str | None = None
     cost_usd: float | None = None
 
@@ -98,7 +98,7 @@ class SubTask:
 
 @dataclass
 class TicketState:
-    """Contents of `.foreman/<TICKET>/state.json`. The source of truth.
+    """Contents of `.forman/<TICKET>/state.json`. The source of truth.
 
     `manifest.md` is rendered from this on every write and is never parsed back.
     """
@@ -188,7 +188,7 @@ class PullRequest:
 
 @dataclass
 class RunReport:
-    """What one `foreman pull` produced. Returned by the orchestrator so the CLI
+    """What one `forman pull` produced. Returned by the orchestrator so the CLI
     can print it without the loop doing any I/O of its own."""
 
     ticket: str | None = None

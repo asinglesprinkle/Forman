@@ -2,8 +2,8 @@
 
 import json
 
-from foreman.models import SubTask, SubTaskStatus, TicketState
-from foreman.state import (
+from forman.models import SubTask, SubTaskStatus, TicketState
+from forman.state import (
     StateStore,
     format_cost,
     next_ready_subtask,

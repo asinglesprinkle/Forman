@@ -7,9 +7,9 @@ pin that nothing is created until a human says so.
 
 import pytest
 
-from foreman.linear_client import StubLinearClient
-from foreman.models import Ticket
-from foreman.push import (
+from forman.linear_client import StubLinearClient
+from forman.models import Ticket
+from forman.push import (
     Aborted,
     PushError,
     parse_drafts,
@@ -19,7 +19,7 @@ from foreman.push import (
     render_ticket_markdown,
     to_tickets,
 )
-from foreman.spawn import AgentRun
+from forman.spawn import AgentRun
 
 DRAFT_JSON = """
 Here is the ticket.

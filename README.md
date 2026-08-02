@@ -1,13 +1,13 @@
-![Foreman](assets/foreman.jpg)
+![Forman](assets/forman.jpg)
 
-# Foreman
+# Forman
 
 Turn prose into Linear tickets, then let agents work them until a pull request
 is waiting for you.
 
 ---
 
-Foreman is a local, single-user tool that closes the loop between a ticket and a
+Forman is a local, single-user tool that closes the loop between a ticket and a
 pull request. You describe a problem in plain language; it files the ticket. Later
 it picks that ticket up, breaks it into sub-tasks, runs a fresh agent on each one,
 and stops when there is a PR for you to review.
@@ -16,11 +16,11 @@ It never merges anything and never marks a ticket done. Every run ends at a huma
 
 ## How it works
 
-**Push.** `foreman push` talks it through with you first. It checks your
+**Push.** `forman push` talks it through with you first. It checks your
 description against what the pipeline actually needs to run, asks only for the
 gaps, then shows you the drafted ticket. Nothing is filed until you say so.
 
-**Pull.** `foreman pull` picks a ticket, decomposes it into local sub-tasks, and
+**Pull.** `forman pull` picks a ticket, decomposes it into local sub-tasks, and
 runs them one at a time in fresh agent sessions. It commits after each finished
 sub-task, then opens a PR, comments the link on the ticket, moves the ticket to
 in-review, and stops.
@@ -30,11 +30,11 @@ Linear only ever sees tickets. Sub-tasks are local: files on disk plus git state
 ## Install
 
 Needs Python 3.11+, git, and the [Claude Code CLI](https://claude.com/claude-code)
-on your PATH. `gh` is optional; without it Foreman prints the PR body for you to
+on your PATH. `gh` is optional; without it Forman prints the PR body for you to
 open by hand.
 
 ```sh
-git clone https://github.com/you/foreman && cd foreman
+git clone https://github.com/you/forman && cd forman
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
@@ -42,7 +42,7 @@ pip install -e .
 Then set up your Linear credentials:
 
 ```sh
-foreman init
+forman init
 ```
 
 It asks for a personal API key (get one at
@@ -51,8 +51,8 @@ the API before saving anything, picks a team if you have more than one, and
 tells you whether your board has a workflow state it can use for the review
 gate. Input is hidden, and the file it writes is `0600`.
 
-It saves to `~/.config/foreman/.env` on purpose. Your API key belongs to *you*,
-but Foreman runs inside whichever repo you point it at, so a key saved in one
+It saves to `~/.config/forman/.env` on purpose. Your API key belongs to *you*,
+but Forman runs inside whichever repo you point it at, so a key saved in one
 repo is invisible from every other one.
 
 ## Quick start
@@ -61,19 +61,19 @@ Run it from **inside the repo you want it to work on**. The current directory is
 the codebase; more than one board just means more than one directory.
 
 ```sh
-foreman doctor                    # read-only: what can Foreman see?
-foreman push                      # talk through a ticket, then file it
-foreman pull                      # work the next ready ticket
-foreman pull --ticket ABC-42      # or work a specific one
-foreman status                    # what Foreman has in flight here
+forman doctor                    # read-only: what can Forman see?
+forman push                      # talk through a ticket, then file it
+forman pull                      # work the next ready ticket
+forman pull --ticket ABC-42      # or work a specific one
+forman status                    # what Forman has in flight here
 ```
 
 ### Writing a ticket
 
-`foreman push` is a short conversation, not a one-shot command:
+`forman push` is a short conversation, not a one-shot command:
 
 ```
-$ foreman push
+$ forman push
 What do you want to achieve? (one line is fine)
 > the auth client keeps dropping sessions on long requests
 
@@ -104,7 +104,7 @@ produces a confidently wrong one, several sessions later. That is why this step
 is a conversation.
 
 `e` opens the draft in `$EDITOR`, anything else you type is treated as feedback
-and redrafts. `foreman push "prose" --yes` skips all of it and files in one
+and redrafts. `forman push "prose" --yes` skips all of it and files in one
 shot, which is also what happens automatically when stdin is not a terminal.
 
 `doctor` is the one to reach for when something looks wrong. It prints who you
@@ -119,7 +119,7 @@ the gate, and the tickets currently assigned to you.
    and **aborts if your tree is dirty**. It will not stash your work.
 3. Cuts `<team-key>-<number>/<title-slug>`, so `ABC-42` titled "Add rate limiting"
    becomes `abc-42/add-rate-limiting`.
-4. Decomposes the ticket into sub-task briefs under `.foreman/<TICKET>/`.
+4. Decomposes the ticket into sub-task briefs under `.forman/<TICKET>/`.
 5. Runs them serially, committing after each one, so a mid-run failure leaves a
    clean, readable tree.
 6. Opens the PR, comments it on the ticket, sets the ticket to in-review, stops.
@@ -129,7 +129,7 @@ Fix the blocker, run again, and it skips whatever already finished.
 
 ## Configuration
 
-Set in the environment, a `.env` in the target repo, or `~/.config/foreman/.env`.
+Set in the environment, a `.env` in the target repo, or `~/.config/forman/.env`.
 Nearest wins; the shell always beats a file.
 
 | Variable | Required | What it does |
@@ -139,7 +139,7 @@ Nearest wins; the shell always beats a file.
 | `LINEAR_REVIEW_STATE` | no | Exact workflow state for the gate. Any state containing "review" is matched by default |
 | `LINEAR_USER` | no | Act as someone else. Unset, identity comes from the API key, which cannot drift when a name changes |
 
-Foreman keeps its bookkeeping in `.foreman/` inside the target repo and adds that
+Forman keeps its bookkeeping in `.forman/` inside the target repo and adds that
 plus `.env` to `.git/info/exclude`, so neither can be committed by accident.
 
 ## Design decisions

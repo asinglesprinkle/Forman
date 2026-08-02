@@ -128,6 +128,6 @@ class StubLinearClient:
 
 
 def stub_path(repo_root: str | Path) -> Path:
-    from .state import FOREMAN_DIR
+    from .state import FORMAN_DIR
 
-    return Path(repo_root) / FOREMAN_DIR / STUB_FILE
+    return Path(repo_root) / FORMAN_DIR / STUB_FILE

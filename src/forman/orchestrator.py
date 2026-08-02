@@ -158,14 +158,14 @@ def pr_body(ticket: Ticket, state: TicketState) -> str:
     lines += [
         "---",
         "",
-        "Opened by Foreman. Not auto-merged: this PR and the ticket's in-review "
+        "Opened by Forman. Not auto-merged: this PR and the ticket's in-review "
         "state are the human gate.",
     ]
     return "\n".join(lines)
 
 
 def halt_comment(ticket: Ticket, state: TicketState) -> str:
-    lines = [f"Foreman ran {ticket.identifier} on `{state.branch}` and stopped short.", ""]
+    lines = [f"Forman ran {ticket.identifier} on `{state.branch}` and stopped short.", ""]
     for st in state.subtasks:
         if st.status == SubTaskStatus.DONE.value:
             lines.append(f"- done: `{st.id}` {st.goal}")
@@ -178,7 +178,7 @@ def halt_comment(ticket: Ticket, state: TicketState) -> str:
             lines.append(f"- not started: `{st.id}` {st.goal}")
     lines += [
         "",
-        "Resolve the blockers and run foreman again on this repo. The re-run "
+        "Resolve the blockers and run forman again on this repo. The re-run "
         "skips sub-tasks that are already done.",
     ]
     return "\n".join(lines)
@@ -295,7 +295,7 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
             subtask.status = SubTaskStatus.DONE.value
             subtask.log = result.summary
             deps.store.append_execution_log(
-                ticket.identifier, subtask.id, f"[foreman] done: {result.summary}"
+                ticket.identifier, subtask.id, f"[forman] done: {result.summary}"
             )
             deps.store.save(state)
             # Commit per done sub-task so a mid-run failure leaves a clean,
@@ -306,7 +306,7 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
             subtask.blocked_reason = result.blocked_reason
             subtask.log = result.summary
             deps.store.append_execution_log(
-                ticket.identifier, subtask.id, f"[foreman] blocked: {result.blocked_reason}"
+                ticket.identifier, subtask.id, f"[forman] blocked: {result.blocked_reason}"
             )
             deps.store.save(state)
         else:
@@ -314,7 +314,7 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
             subtask.blocked_reason = result.error or "agent failed"
             subtask.log = result.summary or None
             deps.store.append_execution_log(
-                ticket.identifier, subtask.id, f"[foreman] failed: {subtask.blocked_reason}"
+                ticket.identifier, subtask.id, f"[forman] failed: {subtask.blocked_reason}"
             )
             deps.store.save(state)
 
@@ -357,7 +357,7 @@ def _spawn_with_retry(
             deps.store.append_execution_log(
                 ticket.identifier,
                 subtask.id,
-                f"[foreman] attempt {attempt} of {total} failed: {result.error}. "
+                f"[forman] attempt {attempt} of {total} failed: {result.error}. "
                 "Retrying once in the same working tree.",
             )
             # Re-read: the failed attempt may have appended to the log itself,
@@ -405,7 +405,7 @@ def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
     if pr.manual:
         deps.linear.comment(
             ticket.identifier,
-            f"Foreman finished {ticket.identifier} on branch `{state.branch}` but "
+            f"Forman finished {ticket.identifier} on branch `{state.branch}` but "
             "could not open the pull request automatically. Open it by hand:\n\n"
             f"{pr.body}",
         )

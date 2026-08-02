@@ -2,7 +2,7 @@
 
 import pytest
 
-from foreman.topo import CycleError, ready_nodes, topo_sort
+from forman.topo import CycleError, ready_nodes, topo_sort
 
 
 def test_orders_dependencies_first():
