@@ -363,7 +363,7 @@ def test_without_linear_user_the_api_key_is_the_identity():
 
     # The viewer path: no user lookup, no name to get wrong.
     assert "assignedIssues" in transport.calls[0][0]
-    assert transport.calls[0][1] == {"first": PAGE_SIZE}
+    assert transport.calls[0][1] == {"first": PAGE_SIZE, "after": None}
 
 
 def test_linear_user_switches_to_an_explicit_assignee_filter():
@@ -377,7 +377,11 @@ def test_linear_user_switches_to_an_explicit_assignee_filter():
     tickets = c.list_assigned()
 
     assert [t.identifier for t in tickets] == ["TEAM-7"]
-    assert transport.calls[-1][1] == {"first": PAGE_SIZE, "userId": "uuid-mate"}
+    assert transport.calls[-1][1] == {
+        "first": PAGE_SIZE,
+        "after": None,
+        "userId": "uuid-mate",
+    }
 
 
 def test_linear_user_also_decides_who_new_tickets_go_to():
@@ -486,3 +490,150 @@ def test_missing_key_error_says_where_to_put_one(tmp_path, monkeypatch):
     message = str(exc.value)
     assert "linear.app/settings/api" in message
     assert "--linear stub" in message
+
+
+# -- pagination ---------------------------------------------------------------
+#
+# Asking for one page and reading its nodes is indistinguishable from asking for
+# everything, which is what made the truncation invisible. These pin the walk.
+
+
+def connection(key, nodes, cursor=None):
+    """One page of a top-level connection. A cursor means more pages follow."""
+    return {
+        "data": {
+            key: {
+                "nodes": nodes,
+                "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor},
+            }
+        }
+    }
+
+
+def paged_assigned(nodes, cursor=None):
+    """One page of the viewer's assigned issues."""
+    return {
+        "data": {
+            "viewer": {
+                "id": "u1",
+                "name": "Test User",
+                "assignedIssues": {
+                    "nodes": nodes,
+                    "pageInfo": {
+                        "hasNextPage": cursor is not None,
+                        "endCursor": cursor,
+                    },
+                },
+            }
+        }
+    }
+
+
+def test_assigned_tickets_past_the_first_page_are_not_dropped():
+    transport = FakeTransport(
+        [
+            paged_assigned([issue_node("TEAM-1")], cursor="page2"),
+            paged_assigned([issue_node("TEAM-2")]),
+        ]
+    )
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+
+    assert [t.identifier for t in c.list_assigned()] == ["TEAM-1", "TEAM-2"]
+    assert transport.calls[0][1]["after"] is None
+    assert transport.calls[1][1]["after"] == "page2"
+
+
+def test_the_walk_asks_for_a_full_page_each_time_not_the_remainder():
+    transport = FakeTransport(
+        [
+            paged_assigned([issue_node("TEAM-1")], cursor="page2"),
+            paged_assigned([issue_node("TEAM-2")]),
+        ]
+    )
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+    c.list_assigned()
+
+    # PAGE_SIZE is the complexity ceiling on one request, so every request is
+    # entitled to it.
+    assert [call[1]["first"] for call in transport.calls] == [PAGE_SIZE, PAGE_SIZE]
+
+
+def test_first_caps_the_answer_and_keeps_doctor_to_one_round_trip():
+    transport = FakeTransport(
+        paged_assigned([issue_node(f"TEAM-{n}") for n in range(1, 6)], cursor="more")
+    )
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+
+    assert len(c.list_assigned(first=5)) == 5
+    assert len(transport.calls) == 1
+    assert transport.calls[0][1]["first"] == 5
+
+
+def test_a_connection_with_no_pageinfo_stops_instead_of_spinning():
+    # The fake replays this forever. Truncating is the old behaviour and is
+    # survivable; looping until the API key gets rate limited is not.
+    transport = FakeTransport(assigned_response([issue_node("TEAM-7")]))
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+
+    assert len(c.list_assigned()) == 1
+    assert len(transport.calls) == 1
+
+
+def test_a_cursor_that_never_moves_ends_the_walk():
+    transport = FakeTransport(paged_assigned([issue_node("TEAM-1")], cursor="stuck"))
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+
+    assert len(c.list_assigned()) == 2
+    assert len(transport.calls) == 2
+
+
+def test_a_user_on_the_second_page_is_still_resolvable():
+    mate = {
+        "id": "uuid-mate",
+        "name": "Team Mate",
+        "displayName": "mate",
+        "email": "mate@example.com",
+        "active": True,
+    }
+    transport = FakeTransport(
+        [
+            connection("users", [], cursor="page2"),
+            connection("users", [mate]),
+        ]
+    )
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+
+    assert c.resolve_user("mate@example.com")["id"] == "uuid-mate"
+
+
+def test_a_project_on_a_later_page_still_gets_attached():
+    transport = FakeTransport(
+        [
+            team_response([]),
+            VIEWER,
+            connection("projects", [{"id": "p-other", "name": "Other"}], cursor="p2"),
+            connection("projects", [{"id": "p-wanted", "name": "Rate Limiting"}]),
+            create_response(),
+        ]
+    )
+    c = GraphQLLinearClient(api_key="k", team_key="TEAM", transport=transport)
+    c.create(Ticket(identifier="", title="New thing", project="Rate Limiting"))
+
+    assert transport.calls[-1][1]["input"]["projectId"] == "p-wanted"
+
+
+def test_teams_past_the_first_page_count_toward_ambiguity():
+    transport = FakeTransport(
+        [
+            connection(
+                "teams", [{"id": "t1", "key": "ONE", "name": "One"}], cursor="p2"
+            ),
+            connection("teams", [{"id": "t2", "key": "TWO", "name": "Two"}]),
+        ]
+    )
+    c = GraphQLLinearClient(api_key="k", transport=transport)
+
+    # Before the walk this saw one team and silently picked it.
+    with pytest.raises(LinearApiError) as exc:
+        c.default_team_key()
+    assert "ONE" in str(exc.value) and "TWO" in str(exc.value)

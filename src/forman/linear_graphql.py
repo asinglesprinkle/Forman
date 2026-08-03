@@ -26,9 +26,13 @@ DEFAULT_TIMEOUT = 30.0
 # Linear scores every query for complexity and rejects anything over 10,000.
 # The issue fragment below is nested (labels, project, team, and both relation
 # edges), so it costs roughly 230 per issue: 100 issues measured at 22,731 and
-# was refused outright. 25 leaves comfortable headroom. That is a hard cap on
-# how many open assigned tickets we consider, not a page size we walk past.
+# was refused outright. 25 leaves comfortable headroom. It is how much we ask
+# for per round trip, not how much we are willing to see.
 PAGE_SIZE = 25
+
+# Lookup queries select an id and a name and nothing nested, so they cost
+# almost nothing and can take Linear's largest allowed page.
+SHALLOW_PAGE_SIZE = 250
 
 # Linear stores priority as an int. 0 means "no priority", which we treat as the
 # lowest rung so unprioritized work never outranks something explicitly set.
@@ -52,15 +56,17 @@ _ISSUE_FIELDS = """
 """
 
 _ASSIGNED_QUERY = f"""
-query FormanAssigned($first: Int!) {{
+query FormanAssigned($first: Int!, $after: String) {{
   viewer {{
     id
     name
     assignedIssues(
       first: $first
+      after: $after
       filter: {{ completedAt: {{ null: true }}, canceledAt: {{ null: true }} }}
     ) {{
       nodes {{ {_ISSUE_FIELDS} }}
+      pageInfo {{ hasNextPage endCursor }}
     }}
   }}
 }}
@@ -92,9 +98,10 @@ query FormanStates($teamKey: String!) {
 """
 
 _ASSIGNED_TO_QUERY = f"""
-query FormanAssignedTo($first: Int!, $userId: ID!) {{
+query FormanAssignedTo($first: Int!, $after: String, $userId: ID!) {{
   issues(
     first: $first
+    after: $after
     filter: {{
       assignee: {{ id: {{ eq: $userId }} }}
       completedAt: {{ null: true }}
@@ -102,6 +109,7 @@ query FormanAssignedTo($first: Int!, $userId: ID!) {{
     }}
   ) {{
     nodes {{ {_ISSUE_FIELDS} }}
+    pageInfo {{ hasNextPage endCursor }}
   }}
 }}
 """
@@ -111,13 +119,21 @@ query FormanViewer { viewer { id name displayName email } }
 """
 
 _USERS_QUERY = """
-query FormanUsers {
-  users(first: 250) { nodes { id name displayName email active } }
+query FormanUsers($first: Int!, $after: String) {
+  users(first: $first, after: $after) {
+    nodes { id name displayName email active }
+    pageInfo { hasNextPage endCursor }
+  }
 }
 """
 
 _TEAMS_QUERY = """
-query FormanTeams { teams(first: 50) { nodes { id key name } } }
+query FormanTeams($first: Int!, $after: String) {
+  teams(first: $first, after: $after) {
+    nodes { id key name }
+    pageInfo { hasNextPage endCursor }
+  }
+}
 """
 
 _COMMENT_MUTATION = """
@@ -150,7 +166,12 @@ mutation FormanRelate($issueId: String!, $relatedIssueId: String!) {
 """
 
 _PROJECTS_QUERY = """
-query FormanProjects { projects(first: 100) { nodes { id name } } }
+query FormanProjects($first: Int!, $after: String) {
+  projects(first: $first, after: $after) {
+    nodes { id name }
+    pageInfo { hasNextPage endCursor }
+  }
+}
 """
 
 
@@ -159,6 +180,57 @@ class LinearApiError(RuntimeError):
 
 
 Transport = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def paginate(
+    query_fn: Callable[..., dict[str, Any]],
+    query: str,
+    *path: str,
+    first: int = SHALLOW_PAGE_SIZE,
+    limit: int | None = None,
+    **variables: Any,
+) -> list[dict[str, Any]]:
+    """Walk a Linear connection to the end and return every node.
+
+    Asking for `first: N` and reading the nodes gets you N of them and no hint
+    that there was ever an N+1. That silence is the whole problem: a project on
+    the second page reads back as a project that does not exist, and the caller
+    goes on to file the work somewhere else.
+
+    `path` names the connection inside the response body — ("users",) for a
+    top-level one, ("viewer", "assignedIssues") for the nested one. The query
+    has to declare `$first: Int!` and `$after: String` and select
+    `pageInfo { hasNextPage endCursor }`. Without that pageInfo this stops
+    after one page, which is the old truncating behaviour rather than a spin.
+
+    `first` is the page size, not the answer size: Linear allows at most 250,
+    and its complexity scorer allows far less for a nested fragment. `limit`
+    caps the answer and stops the walk early.
+
+    Takes the query callable rather than a client so Red can page its own
+    project queries through the same walk.
+    """
+    nodes: list[dict[str, Any]] = []
+    after: str | None = None
+    seen: set[str] = set()
+
+    while True:
+        page = min(first, limit - len(nodes)) if limit else first
+        body: Any = query_fn(query, first=page, after=after, **variables)
+        for key in path:
+            body = body[key]
+
+        nodes.extend(body.get("nodes") or [])
+        if limit is not None and len(nodes) >= limit:
+            return nodes[:limit]
+
+        info = body.get("pageInfo") or {}
+        after = info.get("endCursor")
+        # A server claiming another page without moving the cursor would spin
+        # here forever, so a missing or repeated cursor counts as the end.
+        if not info.get("hasNextPage") or not after or after in seen:
+            return nodes
+        seen.add(after)
 
 
 def _status_from_state(name: str, type_: str) -> str:
@@ -314,7 +386,7 @@ class GraphQLLinearClient:
     def users(self) -> list[dict[str, Any]]:
         cached = self._users
         if cached is None:
-            cached = self._users = self.query(_USERS_QUERY)["users"]["nodes"]
+            cached = self._users = paginate(self.query, _USERS_QUERY, "users")
         return cached
 
     def resolve_user(self, who: str) -> dict[str, Any]:
@@ -360,7 +432,7 @@ class GraphQLLinearClient:
         return self._teams[key]
 
     def teams(self) -> list[dict[str, Any]]:
-        return self.query(_TEAMS_QUERY)["teams"]["nodes"]
+        return paginate(self.query, _TEAMS_QUERY, "teams")
 
     def find_state(self, team_key: str, wanted: str) -> dict[str, Any]:
         """Find the workflow state to move an issue into.
@@ -404,21 +476,34 @@ class GraphQLLinearClient:
     # -- protocol ------------------------------------------------------------
 
     def list_assigned(self, first: int | None = None) -> list[Ticket]:
-        """Open tickets for the acting user, newest page only.
+        """Every open ticket for the acting user.
 
-        Capped at PAGE_SIZE by Linear's query-complexity limit. If you ever
-        genuinely have more open assigned tickets than that, this needs real
-        pagination rather than a bigger number.
+        `first` caps how many come back; the default walks to the end. The walk
+        terminates on its own because the query is narrow: one assignee, with
+        completed and canceled issues filtered out server-side. It is one
+        person's open backlog, not the workspace.
+
+        PAGE_SIZE per round trip is Linear's complexity limit talking, not a
+        ceiling on the answer.
         """
-        first = first or PAGE_SIZE
         if self.user:
-            nodes = self.query(
-                _ASSIGNED_TO_QUERY, first=first, userId=self.actor()["id"]
-            )["issues"]["nodes"]
+            nodes = paginate(
+                self.query,
+                _ASSIGNED_TO_QUERY,
+                "issues",
+                first=PAGE_SIZE,
+                limit=first,
+                userId=self.actor()["id"],
+            )
         else:
-            nodes = self.query(_ASSIGNED_QUERY, first=first)["viewer"][
-                "assignedIssues"
-            ]["nodes"]
+            nodes = paginate(
+                self.query,
+                _ASSIGNED_QUERY,
+                "viewer",
+                "assignedIssues",
+                first=PAGE_SIZE,
+                limit=first,
+            )
 
         tickets = []
         for node in nodes:
@@ -488,7 +573,7 @@ class GraphQLLinearClient:
             if ids:
                 payload["labelIds"] = ids
         if ticket.project:
-            for project in self.query(_PROJECTS_QUERY)["projects"]["nodes"]:
+            for project in paginate(self.query, _PROJECTS_QUERY, "projects"):
                 if project["name"].lower() == ticket.project.lower():
                     payload["projectId"] = project["id"]
                     break
