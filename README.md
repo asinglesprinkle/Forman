@@ -184,8 +184,6 @@ The suite runs the entire pipeline against a stubbed spawn and a stubbed Linear,
 asserting state transitions, commit points, and that runs halt at the gate. No
 network, no git, no API key, no model calls.
 
-`docs/build-spec.md` is the original specification, kept for provenance.
-
 ## License
 
 [MIT](LICENSE)

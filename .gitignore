@@ -6,6 +6,7 @@ venv/
 dist/
 build/
 .pytest_cache/
+.ruff_cache/
 
 # Secrets. LINEAR_API_KEY lives here. Never commit this.
 .env
