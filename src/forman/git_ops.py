@@ -53,6 +53,7 @@ def _run(repo: str | Path, *args: str, check: bool = True) -> str:
         cwd=str(repo),
         capture_output=True,
         text=True,
+        check=False,
     )
     if check and proc.returncode != 0:
         raise GitError(list(args), proc.returncode, proc.stderr)
@@ -236,12 +237,13 @@ def open_pull_request(
         cwd=str(repo),
         capture_output=True,
         text=True,
+        check=False,
     )
     if proc.returncode != 0:
         # An existing PR for this branch is the common case on a re-run.
         existing = subprocess.run(
             ["gh", "pr", "view", branch, "--json", "url", "--jq", ".url"],
-            cwd=str(repo), capture_output=True, text=True,
+            cwd=str(repo), capture_output=True, text=True, check=False,
         )
         if existing.returncode == 0 and existing.stdout.strip():
             return PullRequest(

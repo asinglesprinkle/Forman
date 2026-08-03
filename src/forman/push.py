@@ -11,8 +11,8 @@ pull phase's ticket-level topo-sort is built on exactly those fields.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .linear_client import LinearClient
 from .models import Ticket

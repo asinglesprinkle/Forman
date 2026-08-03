@@ -6,14 +6,13 @@ because nothing moves a failed sub-task back to pending.
 """
 
 import pytest
+from test_orchestrator_stub import TWO_STEP, make_deps
+from test_retry import RecordingSpawn
 
 from forman.models import SpawnResult, SubTask, SubTaskStatus, TicketState
 from forman.orchestrator import run_once
 from forman.spawn import AgentRun, is_retryable, result_from_run
 from forman.state import StateStore, next_ready_subtask, reset_for_resume
-
-from test_orchestrator_stub import TWO_STEP, make_deps
-from test_retry import RecordingSpawn
 
 
 def halted_state() -> TicketState:
@@ -114,7 +113,7 @@ def test_a_resumed_run_only_reruns_what_failed(tmp_path):
     store.save(state)
 
     spawn = RecordingSpawn({})
-    deps, _store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, _store, _linear, _git = make_deps(tmp_path, TWO_STEP)
     deps.store = store
     deps.spawn = spawn
     from forman.models import Ticket

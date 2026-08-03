@@ -12,8 +12,8 @@ numbered in dependency order, so `.01` can never depend on `.02`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .models import SubTask, SubTaskSpec, Ticket
 from .spawn import (

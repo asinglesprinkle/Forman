@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from .spawn import Activity, describe_activity
 

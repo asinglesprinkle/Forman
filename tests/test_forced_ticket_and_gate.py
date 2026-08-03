@@ -5,11 +5,11 @@ workspace: left to itself the selector would have grabbed live work, and plenty
 of boards have no in-review state for the gate to move a ticket into.
 """
 
+from test_orchestrator_stub import TWO_STEP, make_deps
+
 from forman.linear_client import StubLinearClient
 from forman.models import Ticket, TicketStatus
 from forman.orchestrator import run_once
-
-from test_orchestrator_stub import TWO_STEP, FakeGit, make_deps
 
 
 class NoReviewStateLinear(StubLinearClient):
@@ -27,7 +27,7 @@ def test_forced_ticket_beats_the_selector(tmp_path):
         Ticket(identifier="TEAM-30", title="Real work in progress", priority="urgent"),
         Ticket(identifier="TEAM-31", title="Forman smoke test", priority="low"),
     ]
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
+    deps, _store, _linear, _git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
 
     # Left alone, the selector takes the urgent one.
     assert run_once(deps).ticket == "TEAM-30"
@@ -39,7 +39,7 @@ def test_forced_ticket_is_worked_even_when_lower_priority(tmp_path):
         Ticket(identifier="TEAM-31", title="Forman smoke test", priority="low"),
     ]
     goals = [("do the thing", []), ("do the other thing", ["TEAM-31.01"])]
-    deps, store, linear, git = make_deps(tmp_path, goals, tickets=tickets)
+    deps, store, _linear, _git = make_deps(tmp_path, goals, tickets=tickets)
 
     report = run_once(deps, ticket_id="TEAM-31")
 
@@ -52,7 +52,7 @@ def test_forced_ticket_is_worked_even_when_lower_priority(tmp_path):
 
 def test_forcing_a_finished_ticket_is_a_no_op(tmp_path):
     tickets = [Ticket(identifier="TEAM-31", title="Already shipped", status="done")]
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
+    deps, _store, _linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
 
     report = run_once(deps, ticket_id="TEAM-31")
 
@@ -62,7 +62,7 @@ def test_forcing_a_finished_ticket_is_a_no_op(tmp_path):
 
 
 def test_missing_review_state_does_not_fail_a_finished_run(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, store, _linear, _git = make_deps(tmp_path, TWO_STEP)
     deps.linear = NoReviewStateLinear(
         [Ticket(identifier="TEAM-7", title="Add rate limiting to the auth endpoint")]
     )
