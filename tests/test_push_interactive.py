@@ -68,14 +68,14 @@ def make(answers, conversation=None, edit=None):
         return replies.pop(0) if replies else "q"
 
     linear = StubLinearClient()
-    kwargs = dict(
-        prose="the auth client keeps dropping sessions",
-        linear=linear,
-        ask=ask,
-        show=shown.append,
-        conversation=conversation or ScriptedConversation([DRAFT_JSON]),
-        edit=edit,
-    )
+    kwargs = {
+        "prose": "the auth client keeps dropping sessions",
+        "linear": linear,
+        "ask": ask,
+        "show": shown.append,
+        "conversation": conversation or ScriptedConversation([DRAFT_JSON]),
+        "edit": edit,
+    }
     return kwargs, linear, asked, shown
 
 
@@ -83,7 +83,7 @@ def make(answers, conversation=None, edit=None):
 
 
 def test_nothing_is_created_until_the_human_says_so():
-    kwargs, linear, asked, shown = make(["q"])
+    kwargs, linear, _asked, _shown = make(["q"])
 
     with pytest.raises(Aborted):
         push_interactive(**kwargs)
@@ -92,7 +92,7 @@ def test_nothing_is_created_until_the_human_says_so():
 
 
 def test_creating_files_the_ticket():
-    kwargs, linear, asked, shown = make(["c"])
+    kwargs, linear, _asked, _shown = make(["c"])
     made = push_interactive(**kwargs)
 
     assert len(made) == 1
@@ -101,12 +101,12 @@ def test_creating_files_the_ticket():
 
 
 def test_bare_enter_accepts_the_draft():
-    kwargs, linear, *_ = make([""])
+    kwargs, _linear, *_ = make([""])
     assert len(push_interactive(**kwargs)) == 1
 
 
 def test_the_draft_is_shown_before_anything_is_created():
-    kwargs, linear, asked, shown = make(["c"])
+    kwargs, _linear, _asked, shown = make(["c"])
     push_interactive(**kwargs)
 
     body = "\n".join(shown)
@@ -119,7 +119,7 @@ def test_the_draft_is_shown_before_anything_is_created():
 
 def test_questions_reach_the_human_and_answers_reach_the_agent():
     convo = ScriptedConversation([QUESTION, DRAFT_JSON])
-    kwargs, linear, asked, shown = make(["yes, refresh only, web", "c"], convo)
+    kwargs, linear, _asked, shown = make(["yes, refresh only, web", "c"], convo)
 
     push_interactive(**kwargs)
 
@@ -131,7 +131,7 @@ def test_json_ends_the_questioning():
     # The draft arrives first, so the human is never asked anything except
     # whether to create it.
     convo = ScriptedConversation([DRAFT_JSON, QUESTION])
-    kwargs, linear, asked, shown = make(["c"], convo)
+    kwargs, _linear, asked, shown = make(["c"], convo)
 
     push_interactive(**kwargs)
 
@@ -143,7 +143,7 @@ def test_endless_questions_are_cut_off():
     # An agent that will not stop asking. The human answers three times and
     # then says create; nothing beyond the cap is ever put to them.
     convo = ScriptedConversation([QUESTION] * 10 + [DRAFT_JSON])
-    kwargs, linear, asked, shown = make(["a", "b", "c", "c"], convo)
+    kwargs, linear, _asked, shown = make(["a", "b", "c", "c"], convo)
 
     push_interactive(**kwargs)
 
@@ -156,7 +156,7 @@ def test_endless_questions_are_cut_off():
 
 def test_feedback_redrafts_without_creating():
     convo = ScriptedConversation([DRAFT_JSON])
-    kwargs, linear, asked, shown = make(["make the title shorter", "c"], convo)
+    kwargs, linear, _asked, _shown = make(["make the title shorter", "c"], convo)
 
     push_interactive(**kwargs)
 
@@ -173,14 +173,14 @@ def test_edit_replaces_the_draft_with_whatever_came_back():
             "Fix token refresh",
         )
 
-    kwargs, linear, asked, shown = make(["e", "c"], edit=fake_editor)
+    kwargs, _linear, _asked, _shown = make(["e", "c"], edit=fake_editor)
     made = push_interactive(**kwargs)
 
     assert made[0].title == "Fix token refresh"
 
 
 def test_a_broken_edit_does_not_destroy_the_draft():
-    kwargs, linear, asked, shown = make(["e", "c"], edit=lambda _text: "garbage")
+    kwargs, _linear, _asked, shown = make(["e", "c"], edit=lambda _text: "garbage")
     made = push_interactive(**kwargs)
 
     assert "Could not read that back" in "\n".join(shown)
@@ -188,7 +188,7 @@ def test_a_broken_edit_does_not_destroy_the_draft():
 
 
 def test_edit_without_an_editor_says_so_instead_of_crashing():
-    kwargs, linear, asked, shown = make(["e", "c"], edit=None)
+    kwargs, _linear, _asked, shown = make(["e", "c"], edit=None)
     push_interactive(**kwargs)
     assert "No editor available" in "\n".join(shown)
 

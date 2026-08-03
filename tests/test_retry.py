@@ -5,11 +5,11 @@ whole ticket over one is needless. An external blocker will not resolve itself,
 so retrying it just burns tokens to get the same answer.
 """
 
+from test_orchestrator_stub import TWO_STEP, make_deps
+
 from forman.models import SpawnResult, SubTaskStatus, Ticket
 from forman.orchestrator import run_once
 from forman.spawn import build_subtask_prompt
-
-from test_orchestrator_stub import TWO_STEP, make_deps
 
 
 class RecordingSpawn:
@@ -38,7 +38,7 @@ def test_a_failed_subtask_is_retried_once_and_can_succeed(tmp_path):
     spawn = RecordingSpawn(
         {"TEAM-7.01": [SpawnResult(status="failed", error="turn limit hit")]}
     )
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, store, _linear, _git = make_deps(tmp_path, TWO_STEP)
     deps.spawn = spawn
 
     report = run_once(deps)
@@ -83,7 +83,7 @@ def test_two_failures_give_up_and_say_how_many_attempts(tmp_path):
             ]
         }
     )
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, store, linear, _git = make_deps(tmp_path, TWO_STEP)
     deps.spawn = spawn
 
     report = run_once(deps)

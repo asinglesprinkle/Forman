@@ -290,4 +290,6 @@ def test_terminal_reviewer_counts_the_tickets_in_its_prompt():
     approval = Approval(tickets=[Ticket("", "a"), Ticket("", "b")], rendered="...")
 
     assert reviewer.decide(approval) == Decision("quit")
-    assert asked == ["[c]reate 2 ticket(s), [e]dit, [q]uit, or type feedback to redraft: "]
+    assert asked == [
+        "[c]reate 2 ticket(s), [e]dit, [q]uit, or type feedback to redraft: "
+    ]

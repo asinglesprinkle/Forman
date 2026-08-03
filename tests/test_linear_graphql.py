@@ -54,22 +54,34 @@ def issue_node(
         "project": {"name": "Platform"},
         "team": {"id": "uuid-team", "key": identifier.rsplit("-", 1)[0]},
         "relations": {
-            "nodes": [{"type": "blocks", "relatedIssue": {"identifier": b}} for b in blocks]
+            "nodes": [
+                {"type": "blocks", "relatedIssue": {"identifier": b}} for b in blocks
+            ]
         },
         "inverseRelations": {
-            "nodes": [{"type": "blocks", "issue": {"identifier": b}} for b in blocked_by]
+            "nodes": [
+                {"type": "blocks", "issue": {"identifier": b}} for b in blocked_by
+            ]
         },
     }
 
 
 def assigned_response(nodes):
     return {
-        "data": {"viewer": {"id": "u1", "name": "Test User", "assignedIssues": {"nodes": nodes}}}
+        "data": {
+            "viewer": {
+                "id": "u1",
+                "name": "Test User",
+                "assignedIssues": {"nodes": nodes},
+            }
+        }
     }
 
 
 def client(responses, **kwargs):
-    return GraphQLLinearClient(api_key="lin_api_test", transport=FakeTransport(responses), **kwargs)
+    return GraphQLLinearClient(
+        api_key="lin_api_test", transport=FakeTransport(responses), **kwargs
+    )
 
 
 # -- field mapping -----------------------------------------------------------
@@ -94,7 +106,9 @@ def test_relation_direction_is_not_backwards():
 
 def test_non_blocking_relations_are_ignored():
     node = issue_node()
-    node["relations"]["nodes"].append({"type": "related", "relatedIssue": {"identifier": "TEAM-4"}})
+    node["relations"]["nodes"].append(
+        {"type": "related", "relatedIssue": {"identifier": "TEAM-4"}}
+    )
     assert _ticket_from_node(node).blocks == []
 
 
@@ -125,17 +139,23 @@ def test_state_collapses_to_the_loop_vocabulary(name, type_, expected):
 
 
 def test_completed_tickets_are_filtered_out_of_list_assigned():
-    c = client(assigned_response([
-        issue_node("TEAM-7"),
-        issue_node("TEAM-8", state=("Done", "completed")),
-    ]))
+    c = client(
+        assigned_response(
+            [
+                issue_node("TEAM-7"),
+                issue_node("TEAM-8", state=("Done", "completed")),
+            ]
+        )
+    )
     assert [t.identifier for t in c.list_assigned()] == ["TEAM-7"]
 
 
 def test_in_review_tickets_are_returned_but_the_orchestrator_skips_them():
     from forman.orchestrator import select_ticket
 
-    c = client(assigned_response([issue_node("TEAM-7", state=("In Review", "started"))]))
+    c = client(
+        assigned_response([issue_node("TEAM-7", state=("In Review", "started"))])
+    )
     tickets = c.list_assigned()
     assert tickets[0].status == "in_review"
     assert select_ticket(tickets) is None  # already at the gate, waiting on a human
@@ -225,10 +245,12 @@ def test_find_state_fails_loudly_with_the_real_state_names():
 
 
 def test_comment_resolves_the_issue_uuid_then_posts():
-    transport = FakeTransport([
-        {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
-        {"data": {"commentCreate": {"success": True}}},
-    ])
+    transport = FakeTransport(
+        [
+            {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
+            {"data": {"commentCreate": {"success": True}}},
+        ]
+    )
     c = GraphQLLinearClient(api_key="k", transport=transport)
     c.comment("TEAM-7", "PR opened: http://x")
 
@@ -237,11 +259,13 @@ def test_comment_resolves_the_issue_uuid_then_posts():
 
 
 def test_set_status_looks_up_the_state_id():
-    transport = FakeTransport([
-        team_response([{"id": "s1", "name": "In Review", "type": "started"}]),
-        {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
-        {"data": {"issueUpdate": {"success": True}}},
-    ])
+    transport = FakeTransport(
+        [
+            team_response([{"id": "s1", "name": "In Review", "type": "started"}]),
+            {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
+            {"data": {"issueUpdate": {"success": True}}},
+        ]
+    )
     c = GraphQLLinearClient(api_key="k", transport=transport)
     c.set_status("TEAM-7", "in_review")
 
@@ -249,33 +273,65 @@ def test_set_status_looks_up_the_state_id():
 
 
 def test_failed_mutation_raises():
-    transport = FakeTransport([
-        {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
-        {"data": {"commentCreate": {"success": False}}},
-    ])
+    transport = FakeTransport(
+        [
+            {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
+            {"data": {"commentCreate": {"success": False}}},
+        ]
+    )
     c = GraphQLLinearClient(api_key="k", transport=transport)
     with pytest.raises(LinearApiError):
         c.comment("TEAM-7", "hi")
 
 
-VIEWER = {"data": {"viewer": {
-    "id": "uuid-viewer", "name": "Test User",
-    "displayName": "testuser", "email": "test@example.com",
-}}}
+VIEWER = {
+    "data": {
+        "viewer": {
+            "id": "uuid-viewer",
+            "name": "Test User",
+            "displayName": "testuser",
+            "email": "test@example.com",
+        }
+    }
+}
 
-USERS = {"data": {"users": {"nodes": [
-    {"id": "uuid-viewer", "name": "Test User", "displayName": "testuser",
-     "email": "test@example.com", "active": True},
-    {"id": "uuid-mate", "name": "Team Mate", "displayName": "mate",
-     "email": "mate@example.com", "active": True},
-]}}}
+USERS = {
+    "data": {
+        "users": {
+            "nodes": [
+                {
+                    "id": "uuid-viewer",
+                    "name": "Test User",
+                    "displayName": "testuser",
+                    "email": "test@example.com",
+                    "active": True,
+                },
+                {
+                    "id": "uuid-mate",
+                    "name": "Team Mate",
+                    "displayName": "mate",
+                    "email": "mate@example.com",
+                    "active": True,
+                },
+            ]
+        }
+    }
+}
 
 
 def create_response(identifier="TEAM-42"):
-    return {"data": {"issueCreate": {
-        "success": True,
-        "issue": {"id": "uuid-new", "identifier": identifier, "url": f"http://x/{identifier}"},
-    }}}
+    return {
+        "data": {
+            "issueCreate": {
+                "success": True,
+                "issue": {
+                    "id": "uuid-new",
+                    "identifier": identifier,
+                    "url": f"http://x/{identifier}",
+                },
+            }
+        }
+    }
 
 
 def test_create_maps_priority_and_returns_the_identifier():
@@ -311,10 +367,12 @@ def test_without_linear_user_the_api_key_is_the_identity():
 
 
 def test_linear_user_switches_to_an_explicit_assignee_filter():
-    transport = FakeTransport([
-        USERS,
-        {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
-    ])
+    transport = FakeTransport(
+        [
+            USERS,
+            {"data": {"issues": {"nodes": [issue_node("TEAM-7")]}}},
+        ]
+    )
     c = GraphQLLinearClient(api_key="k", user="mate@example.com", transport=transport)
     tickets = c.list_assigned()
 
@@ -355,10 +413,18 @@ def test_create_drops_a_tshirt_estimate_rather_than_sending_junk():
 
 
 def test_create_without_a_team_key_and_several_teams_is_a_clear_error():
-    transport = FakeTransport({"data": {"teams": {"nodes": [
-        {"id": "a", "key": "TEAM", "name": "Eng"},
-        {"id": "b", "key": "OTHER", "name": "Other Team"},
-    ]}}})
+    transport = FakeTransport(
+        {
+            "data": {
+                "teams": {
+                    "nodes": [
+                        {"id": "a", "key": "TEAM", "name": "Eng"},
+                        {"id": "b", "key": "OTHER", "name": "Other Team"},
+                    ]
+                }
+            }
+        }
+    )
     c = GraphQLLinearClient(api_key="k", transport=transport)
     with pytest.raises(LinearApiError, match="LINEAR_TEAM_KEY"):
         c.create(Ticket(identifier="", title="t"))
@@ -369,13 +435,11 @@ def test_create_without_a_team_key_and_several_teams_is_a_clear_error():
 
 def test_parse_env_handles_the_shapes_people_actually_write():
     parsed = parse_env(
-        "\n".join([
-            "# a comment",
-            "",
-            "LINEAR_API_KEY=lin_api_plain",
-            'LINEAR_TEAM_KEY="TEAM"',
-            "export LINEAR_REVIEW_STATE='In Review'",
-        ])
+        "# a comment\n"
+        "\n"
+        "LINEAR_API_KEY=lin_api_plain\n"
+        'LINEAR_TEAM_KEY="TEAM"\n'
+        "export LINEAR_REVIEW_STATE='In Review'"
     )
     assert parsed["LINEAR_API_KEY"] == "lin_api_plain"
     assert parsed["LINEAR_TEAM_KEY"] == "TEAM"

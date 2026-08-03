@@ -17,7 +17,7 @@ from typing import Any
 
 def iso_now() -> str:
     """UTC timestamp in ISO 8601, used for every recorded time."""
-    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
 
 
 class SubTaskStatus(str, Enum):

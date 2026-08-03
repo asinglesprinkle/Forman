@@ -13,10 +13,11 @@ callback and never know what draws it.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from .spawn import Activity, describe_activity
 
@@ -126,7 +127,9 @@ class Progress:
 
     def _erase(self) -> None:
         if self._width:
-            print("\r" + " " * self._width + "\r", end="", file=self._stream, flush=True)
+            print(
+                "\r" + " " * self._width + "\r", end="", file=self._stream, flush=True
+            )
             self._width = 0
 
     def _line(self, text: str, *, live: bool) -> None:
@@ -208,14 +211,14 @@ def drop_typeahead() -> None:
     Only fresh keystrokes count at a gate, so the queue is dropped. Not on a
     pipe: there the queue is the input, and discarding it would eat the answer.
     """
-    try:
+    # No tty to ask, or a platform without termios: there is nothing to drain,
+    # and failing to drain is never worth stopping a run over.
+    with contextlib.suppress(Exception):
         if not sys.stdin.isatty():
             return
         import termios
 
         termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
-    except Exception:  # pragma: no cover - no tty, or a platform without termios
-        pass
 
 
 def ask_after_agent(prompt: str) -> str:

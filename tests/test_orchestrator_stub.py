@@ -20,14 +20,15 @@ from forman.models import (
 from forman.orchestrator import Deps, run_once, select_ticket
 from forman.state import StateStore
 
-
 # -- fakes -------------------------------------------------------------------
 
 
 class FakeGit:
     """Records what the orchestrator asked git to do, in order."""
 
-    def __init__(self, clean: bool = True, pr_url: str | None = "https://github.com/o/r/pull/1"):
+    def __init__(
+        self, clean: bool = True, pr_url: str | None = "https://github.com/o/r/pull/1"
+    ):
         self.calls: list[tuple[str, str]] = []
         self.commits: list[str] = []
         self.clean = clean
@@ -58,7 +59,9 @@ class FakeGit:
     def commit(self, message: str) -> CommitResult:
         self.calls.append(("commit", message))
         self.commits.append(message)
-        return CommitResult(created=True, sha=f"sha{len(self.commits)}", message=message)
+        return CommitResult(
+            created=True, sha=f"sha{len(self.commits)}", message=message
+        )
 
     def push(self, branch: str) -> bool:
         self.calls.append(("push", branch))
@@ -68,7 +71,11 @@ class FakeGit:
     def open_pull_request(self, branch, base, title, body) -> PullRequest:
         self.calls.append(("open_pr", branch))
         return PullRequest(
-            url=self.pr_url, branch=branch, title=title, body=body, manual=self.pr_url is None
+            url=self.pr_url,
+            branch=branch,
+            title=title,
+            body=body,
+            manual=self.pr_url is None,
         )
 
 
@@ -111,7 +118,8 @@ def canned_spawn(results: dict[str, SpawnResult], seen: list[str] | None = None)
 def make_deps(tmp_path, goals, results=None, tickets=None, seen=None, git=None):
     store = StateStore(tmp_path)
     linear = StubLinearClient(
-        tickets or [Ticket(identifier="TEAM-7", title="Add rate limiting to the auth endpoint")]
+        tickets
+        or [Ticket(identifier="TEAM-7", title="Add rate limiting to the auth endpoint")]
     )
     git = git or FakeGit()
     deps = Deps(
@@ -125,14 +133,17 @@ def make_deps(tmp_path, goals, results=None, tickets=None, seen=None, git=None):
     return deps, store, linear, git
 
 
-TWO_STEP = [("Add a token bucket helper", []), ("Wire it into the auth route", ["TEAM-7.01"])]
+TWO_STEP = [
+    ("Add a token bucket helper", []),
+    ("Wire it into the auth route", ["TEAM-7.01"]),
+]
 
 
 # -- happy path --------------------------------------------------------------
 
 
 def test_full_run_reaches_the_gate_and_stops(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, store, _linear, _git = make_deps(tmp_path, TWO_STEP)
 
     report = run_once(deps)
 
@@ -148,7 +159,7 @@ def test_full_run_reaches_the_gate_and_stops(tmp_path):
 
 
 def test_ticket_is_set_to_in_review_and_never_to_done(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, _store, linear, _git = make_deps(tmp_path, TWO_STEP)
     run_once(deps)
 
     assert linear.status_changes == [("TEAM-7", "in_review")]
@@ -158,7 +169,7 @@ def test_ticket_is_set_to_in_review_and_never_to_done(tmp_path):
 
 
 def test_pr_link_is_commented_on_the_ticket(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, _store, linear, _git = make_deps(tmp_path, TWO_STEP)
     run_once(deps)
 
     assert len(linear.comments) == 1
@@ -168,16 +179,23 @@ def test_pr_link_is_commented_on_the_ticket(tmp_path):
 
 
 def test_branch_is_cut_from_a_freshly_pulled_default_branch(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, _store, _linear, git = make_deps(tmp_path, TWO_STEP)
     run_once(deps)
 
     verbs = [name for name, _ in git.calls]
-    assert verbs.index("require_clean") < verbs.index("sync") < verbs.index("create_branch")
-    assert ("create_branch", "team-7/add-rate-limiting-to-the-auth-endpoint") in git.calls
+    assert (
+        verbs.index("require_clean")
+        < verbs.index("sync")
+        < verbs.index("create_branch")
+    )
+    assert (
+        "create_branch",
+        "team-7/add-rate-limiting-to-the-auth-endpoint",
+    ) in git.calls
 
 
 def test_commit_after_each_done_subtask(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, _store, _linear, git = make_deps(tmp_path, TWO_STEP)
     run_once(deps)
 
     # One commit per done sub-task, plus the finalize commit.
@@ -205,7 +223,7 @@ def test_manifest_tracks_the_run(tmp_path):
 
 
 def test_subtasks_never_reach_linear(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP)
+    deps, _store, linear, _git = make_deps(tmp_path, TWO_STEP)
     run_once(deps)
 
     # Linear sees the ticket and one PR comment. Never a sub-task id.
@@ -237,7 +255,10 @@ def test_blocked_subtask_halts_the_run_before_the_gate(tmp_path):
     state = store.load("TEAM-7")
     assert state.status == TicketStatus.IN_PROGRESS.value
     assert state.subtask("TEAM-7.01").status == SubTaskStatus.BLOCKED.value
-    assert state.subtask("TEAM-7.01").blocked_reason == "needs a STRIPE_KEY only the human has"
+    assert (
+        state.subtask("TEAM-7.01").blocked_reason
+        == "needs a STRIPE_KEY only the human has"
+    )
     # The dependent never ran: blocking is terminal for this run, no retry pass.
     assert state.subtask("TEAM-7.02").status == SubTaskStatus.PENDING.value
 
@@ -258,8 +279,10 @@ def test_independent_sibling_still_runs_when_one_is_blocked(tmp_path):
 
 
 def test_failed_subtask_is_recorded_and_halts(tmp_path):
-    results = {"TEAM-7.01": SpawnResult(status="failed", error="agent hit its turn limit")}
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, results)
+    results = {
+        "TEAM-7.01": SpawnResult(status="failed", error="agent hit its turn limit")
+    }
+    deps, store, linear, _git = make_deps(tmp_path, TWO_STEP, results)
 
     report = run_once(deps)
 
@@ -275,7 +298,7 @@ def test_failed_subtask_is_recorded_and_halts(tmp_path):
 
 def test_no_commit_for_a_blocked_subtask(tmp_path):
     results = {"TEAM-7.01": SpawnResult(status="blocked", blocked_reason="external")}
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, results)
+    deps, _store, _linear, git = make_deps(tmp_path, TWO_STEP, results)
     run_once(deps)
     assert git.commits == []
 
@@ -286,10 +309,16 @@ def test_no_commit_for_a_blocked_subtask(tmp_path):
 def test_session_and_cost_are_recorded_for_done_subtasks(tmp_path):
     results = {
         "TEAM-7.01": SpawnResult(
-            status="done", summary="did the helper", session_id="sess-01", total_cost_usd=0.42
+            status="done",
+            summary="did the helper",
+            session_id="sess-01",
+            total_cost_usd=0.42,
         ),
         "TEAM-7.02": SpawnResult(
-            status="done", summary="wired it up", session_id="sess-02", total_cost_usd=1.5
+            status="done",
+            summary="wired it up",
+            session_id="sess-02",
+            total_cost_usd=1.5,
         ),
     }
     deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
@@ -338,10 +367,16 @@ def test_a_retried_subtask_records_the_last_attempts_session(tmp_path):
     results = {
         "TEAM-7.01": [
             SpawnResult(
-                status="failed", error="connection dropped", session_id="sess-a", total_cost_usd=0.1
+                status="failed",
+                error="connection dropped",
+                session_id="sess-a",
+                total_cost_usd=0.1,
             ),
             SpawnResult(
-                status="done", summary="finished it", session_id="sess-b", total_cost_usd=0.3
+                status="done",
+                summary="finished it",
+                session_id="sess-b",
+                total_cost_usd=0.3,
             ),
         ]
     }
@@ -359,8 +394,12 @@ def test_a_retried_subtask_records_the_last_attempts_session(tmp_path):
 
 def test_report_carries_the_ticket_total_and_per_subtask_cost(tmp_path):
     results = {
-        "TEAM-7.01": SpawnResult(status="done", session_id="sess-01", total_cost_usd=0.42),
-        "TEAM-7.02": SpawnResult(status="done", session_id="sess-02", total_cost_usd=1.5),
+        "TEAM-7.01": SpawnResult(
+            status="done", session_id="sess-01", total_cost_usd=0.42
+        ),
+        "TEAM-7.02": SpawnResult(
+            status="done", session_id="sess-02", total_cost_usd=1.5
+        ),
     }
     deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
 
@@ -382,7 +421,7 @@ def test_halted_report_still_carries_the_total(tmp_path):
             status="blocked", blocked_reason="waiting on TEAM-8", total_cost_usd=0.08
         ),
     }
-    deps, store, *_ = make_deps(tmp_path, TWO_STEP, results)
+    deps, _store, *_ = make_deps(tmp_path, TWO_STEP, results)
 
     report = run_once(deps)
 
@@ -393,7 +432,7 @@ def test_halted_report_still_carries_the_total(tmp_path):
 def test_total_is_zero_when_no_costs_were_recorded(tmp_path):
     # The spawn fake returns results with no cost at all, as an older Forman or
     # a stubbed session would. Reporting must not crash or invent a figure.
-    deps, store, *_ = make_deps(tmp_path, TWO_STEP)
+    deps, _store, *_ = make_deps(tmp_path, TWO_STEP)
 
     report = run_once(deps)
 
@@ -405,9 +444,11 @@ def test_total_is_zero_when_no_costs_were_recorded(tmp_path):
 
 
 def test_rerun_skips_already_done_subtasks(tmp_path):
-    results = {"TEAM-7.02": SpawnResult(status="blocked", blocked_reason="waiting on TEAM-8")}
+    results = {
+        "TEAM-7.02": SpawnResult(status="blocked", blocked_reason="waiting on TEAM-8")
+    }
     first_seen: list[str] = []
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, results, seen=first_seen)
+    deps, store, _linear, _git = make_deps(tmp_path, TWO_STEP, results, seen=first_seen)
     run_once(deps)
     assert first_seen == ["TEAM-7.01", "TEAM-7.02"]
 
@@ -420,7 +461,7 @@ def test_rerun_skips_already_done_subtasks(tmp_path):
     store.save(state)
 
     second_seen: list[str] = []
-    deps2, store2, linear2, git2 = make_deps(tmp_path, TWO_STEP, seen=second_seen)
+    deps2, _store2, _linear2, git2 = make_deps(tmp_path, TWO_STEP, seen=second_seen)
     report = run_once(deps2)
 
     assert second_seen == ["TEAM-7.02"]
@@ -433,7 +474,7 @@ def test_rerun_skips_already_done_subtasks(tmp_path):
 
 
 def test_manual_pr_still_reaches_in_review_with_the_body_on_the_ticket(tmp_path):
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, git=FakeGit(pr_url=None))
+    deps, _store, linear, _git = make_deps(tmp_path, TWO_STEP, git=FakeGit(pr_url=None))
     report = run_once(deps)
 
     assert report.outcome == "in_review"
@@ -458,7 +499,7 @@ def test_no_ready_ticket_is_a_clean_no_op(tmp_path):
         Ticket(identifier="TEAM-8", title="Blocked one", blocked_by=["TEAM-9"]),
         Ticket(identifier="TEAM-9", title="Not done yet", status="in_progress"),
     ]
-    deps, store, linear, git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
+    deps, _store, _linear, _git = make_deps(tmp_path, TWO_STEP, tickets=tickets)
     # TEAM-9 is itself ready, so pick it; assert the truly-blocked one is skipped.
     report = run_once(deps)
     assert report.ticket == "TEAM-9"
@@ -515,4 +556,6 @@ def test_select_ticket_skips_tickets_already_at_the_gate():
 
 
 def test_select_ticket_returns_none_when_everything_is_done():
-    assert select_ticket([Ticket(identifier="TEAM-1", title="x", status="done")]) is None
+    assert (
+        select_ticket([Ticket(identifier="TEAM-1", title="x", status="done")]) is None
+    )

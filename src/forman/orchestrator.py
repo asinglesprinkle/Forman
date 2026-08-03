@@ -13,8 +13,9 @@ edit somebody's code.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 
 from .models import (
     CommitResult,
@@ -111,7 +112,11 @@ def select_ticket(tickets: list[Ticket]) -> Ticket | None:
     Tie-break is a plain sort for v1: priority first, then how many other
     tickets this one unblocks, then identifier for determinism.
     """
-    live = [t for t in tickets if not t.is_done() and t.status != TicketStatus.IN_REVIEW.value]
+    live = [
+        t
+        for t in tickets
+        if not t.is_done() and t.status != TicketStatus.IN_REVIEW.value
+    ]
     if not live:
         return None
 
@@ -158,14 +163,19 @@ def pr_body(ticket: Ticket, state: TicketState) -> str:
     lines += [
         "---",
         "",
-        "Opened by Forman. Not auto-merged: this PR and the ticket's in-review "
-        "state are the human gate.",
+        (
+            "Opened by Forman. Not auto-merged: this PR and the ticket's in-review "
+            "state are the human gate."
+        ),
     ]
     return "\n".join(lines)
 
 
 def halt_comment(ticket: Ticket, state: TicketState) -> str:
-    lines = [f"Forman ran {ticket.identifier} on `{state.branch}` and stopped short.", ""]
+    lines = [
+        f"Forman ran {ticket.identifier} on `{state.branch}` and stopped short.",
+        "",
+    ]
     for st in state.subtasks:
         if st.status == SubTaskStatus.DONE.value:
             lines.append(f"- done: `{st.id}` {st.goal}")
@@ -178,8 +188,10 @@ def halt_comment(ticket: Ticket, state: TicketState) -> str:
             lines.append(f"- not started: `{st.id}` {st.goal}")
     lines += [
         "",
-        "Resolve the blockers and run forman again on this repo. The re-run "
-        "skips sub-tasks that are already done.",
+        (
+            "Resolve the blockers and run forman again on this repo. The re-run "
+            "skips sub-tasks that are already done."
+        ),
     ]
     return "\n".join(lines)
 
@@ -306,7 +318,9 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
             subtask.blocked_reason = result.blocked_reason
             subtask.log = result.summary
             deps.store.append_execution_log(
-                ticket.identifier, subtask.id, f"[forman] blocked: {result.blocked_reason}"
+                ticket.identifier,
+                subtask.id,
+                f"[forman] blocked: {result.blocked_reason}",
             )
             deps.store.save(state)
         else:
@@ -314,7 +328,9 @@ def _execute(deps: Deps, ticket: Ticket, state: TicketState) -> None:
             subtask.blocked_reason = result.error or "agent failed"
             subtask.log = result.summary or None
             deps.store.append_execution_log(
-                ticket.identifier, subtask.id, f"[forman] failed: {subtask.blocked_reason}"
+                ticket.identifier,
+                subtask.id,
+                f"[forman] failed: {subtask.blocked_reason}",
             )
             deps.store.save(state)
 

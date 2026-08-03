@@ -169,7 +169,9 @@ def render_manifest(state: TicketState) -> str:
         "",
         f"- status: `{state.status}`",
         f"- branch: `{state.branch}`" if state.branch else "- branch: (not created)",
-        f"- pulled at: {state.pulled_at}" if state.pulled_at else "- pulled at: (unknown)",
+        f"- pulled at: {state.pulled_at}"
+        if state.pulled_at
+        else "- pulled at: (unknown)",
     ]
     if state.pr_url:
         lines.append(f"- pull request: {state.pr_url}")

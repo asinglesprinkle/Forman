@@ -12,8 +12,8 @@ numbered in dependency order, so `.01` can never depend on `.02`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .models import SubTask, SubTaskSpec, Ticket
 from .spawn import (
@@ -79,8 +79,10 @@ def build_decompose_prompt(ticket: Ticket, repo_paths: list[str] | None = None) 
         parts += [f"- {p}" for p in repo_paths]
     parts += [
         "",
-        "Decompose this ticket. End with the JSON object described in your "
-        "instructions and nothing else.",
+        (
+            "Decompose this ticket. End with the JSON object described in your "
+            "instructions and nothing else."
+        ),
     ]
     return "\n".join(parts)
 
@@ -107,7 +109,9 @@ def parse_decomposition(text: str) -> list[SubTaskSpec]:
                 goal=goal,
                 depends_on=[str(d) for d in item.get("depends_on") or []],
                 definition_of_done=[
-                    str(x) for x in item.get("definition_of_done") or [] if str(x).strip()
+                    str(x)
+                    for x in item.get("definition_of_done") or []
+                    if str(x).strip()
                 ],
                 files=[str(x) for x in item.get("files") or [] if str(x).strip()],
                 test_plan=str(item.get("test_plan") or "").strip(),

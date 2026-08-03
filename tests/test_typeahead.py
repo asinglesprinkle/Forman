@@ -55,8 +55,8 @@ def _gate_receives(*, impatient: bytes, then: bytes) -> str:
     try:
         time.sleep(0.2)
         os.write(main, impatient)  # frozen-looking terminal, so: enter, enter
-        time.sleep(1.4)            # the prompt appears at ~1.0s
-        os.write(main, then)       # and now a deliberate answer
+        time.sleep(1.4)  # the prompt appears at ~1.0s
+        os.write(main, then)  # and now a deliberate answer
         err = proc.stderr.read().decode() if proc.stderr else ""
         proc.wait(timeout=15)
     finally:
