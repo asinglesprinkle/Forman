@@ -51,9 +51,40 @@ the API before saving anything, picks a team if you have more than one, and
 tells you whether your board has a workflow state it can use for the review
 gate. Input is hidden, and the file it writes is `0600`.
 
-It saves to `~/.config/forman/.env` on purpose. Your API key belongs to *you*,
-but Forman runs inside whichever repo you point it at, so a key saved in one
-repo is invisible from every other one.
+### Where your key lives
+
+Forman runs agents that execute code inside whichever repo you point it at, so
+where a credential sits is a real decision, not a detail. The key is looked up
+in one order, nearest first:
+
+1. `LINEAR_API_KEY` in the environment
+2. `.env` in the target repo
+3. `~/.config/forman/.env`
+
+`forman init` writes (3), because your Linear key belongs to *you* and not to
+any one project: set it once and every repo you run from picks it up. Use (2)
+when a particular repo needs a *different* key — a work board and a personal
+one under separate accounts, say.
+
+That second case is the isolating one. Lookup only ever considers the target
+repo and your user config, never a sibling checkout, so **a key saved in one
+repo is invisible from every other one**. Forman running in `~/work/api` will
+not load the credential sitting in `~/side-project/.env`, no matter how the two
+are arranged on disk — there is no search path to walk, no parent-directory
+climb, and no cross-repo cache. A work key stays on the work board.
+
+The user-level key at (3) is deliberately the opposite: shared by every repo,
+which is the entire point of putting it there. Two honest limits go with that.
+It is written `0600`, so it is readable only by your account — but agents
+Forman spawns run *as you*, so a repo with no `.env` of its own falls back to it
+rather than failing. And per-repo isolation is about which key Forman *loads*,
+not a sandbox: it does not stop code in your tree from reading files elsewhere
+on the machine. If a board must be unreachable from a given repo, give that repo
+its own `.env` with a narrower key and keep the broad one out of `~/.config`.
+
+Neither file can be committed by accident: Forman adds `.env` and `.forman/` to
+`.git/info/exclude` in the target repo — its own tooling's business, rather than
+an uninvited edit to the project's tracked `.gitignore`.
 
 ## Quick start
 
@@ -127,6 +158,92 @@ the gate, and the tickets currently assigned to you.
 If something blocks, it comments what got in the way and leaves the ticket alone.
 Fix the blocker, run again, and it skips whatever already finished.
 
+## State on disk
+
+Everything Forman knows about a ticket is one directory in the target repo:
+
+```
+.forman/
+  ABC-42/
+    state.json        <- the source of truth
+    manifest.md       <- rendered from state.json on every write, never parsed back
+    ABC-42.01.md      <- sub-task brief, plus the execution log appended under it
+    ABC-42.02.md
+    ABC-42.03.md
+```
+
+`state.json` is the whole resumption story. Nothing is inferred from git, from
+Linear, or from the manifest:
+
+```json
+{
+  "ticket": "ABC-42",
+  "title": "Add rate limiting to the public API",
+  "status": "in_progress",
+  "branch": "abc-42/add-rate-limiting",
+  "pulled_at": "2026-02-11T15:04:07+00:00",
+  "pr_url": null,
+  "subtasks": [
+    {
+      "id": "ABC-42.01",
+      "goal": "Add a token-bucket limiter behind the existing middleware port",
+      "status": "done",
+      "depends_on": [],
+      "blocked_reason": null,
+      "log": null,
+      "started_at": "2026-02-11T15:04:12+00:00",
+      "finished_at": "2026-02-11T15:11:48+00:00",
+      "session_id": "0f3c8a1e-...",
+      "cost_usd": 0.4131
+    },
+    {
+      "id": "ABC-42.02",
+      "goal": "Wire the limiter into the public routes",
+      "status": "in_progress",
+      "depends_on": ["ABC-42.01"],
+      "blocked_reason": null,
+      "log": null,
+      "started_at": "2026-02-11T15:11:50+00:00",
+      "finished_at": null,
+      "session_id": null,
+      "cost_usd": null
+    }
+  ]
+}
+```
+
+Ticket `status` is one of `pulled`, `in_progress`, `in_review`, `blocked`,
+`failed`, `done`; a sub-task is `pending`, `in_progress`, `done`, `blocked`, or
+`failed`, and a `blocked` one always carries a `blocked_reason`. Those two
+vocabularies are why a re-run is cheap: the next sub-task to run is the first
+`pending` one whose `depends_on` are all `done`, which is a pure function of
+this file. Sub-tasks already `done` are never touched, so fixing a blocker and
+running again resumes rather than restarts.
+
+The manifest is for you, not for the program:
+
+```markdown
+# ABC-42: Add rate limiting to the public API
+
+- status: `in_progress`
+- branch: `abc-42/add-rate-limiting`
+- pulled at: 2026-02-11T15:04:07+00:00
+
+<!-- Rendered from state.json on every write. Do not edit by hand. -->
+
+## Sub-tasks
+
+- [x] `ABC-42.01` Add a token-bucket limiter behind the existing middleware port  $0.4131
+- [~] `ABC-42.02` Wire the limiter into the public routes  (in progress)
+- [ ] `ABC-42.03` Document the limits in the API reference  (waiting on ABC-42.02)
+
+**Total: $0.4131**
+```
+
+Safe to open mid-run. Safe to delete, too — the next write regenerates it. If
+the two ever disagree, `state.json` wins and saving fixes the manifest, which is
+the only reason a rendered file can be trusted at all.
+
 ## Configuration
 
 Set in the environment, a `.env` in the target repo, or `~/.config/forman/.env`.
@@ -139,8 +256,8 @@ Nearest wins; the shell always beats a file.
 | `LINEAR_REVIEW_STATE` | no | Exact workflow state for the gate. Any state containing "review" is matched by default |
 | `LINEAR_USER` | no | Act as someone else. Unset, identity comes from the API key, which cannot drift when a name changes |
 
-Forman keeps its bookkeeping in `.forman/` inside the target repo and adds that
-plus `.env` to `.git/info/exclude`, so neither can be committed by accident.
+Which file wins, and why the per-repo one isolates a key from every other
+checkout, is [above](#where-your-key-lives).
 
 ## Design decisions
 
@@ -151,7 +268,9 @@ plus `.env` to `.git/info/exclude`, so neither can be committed by accident.
   ticket, relevant paths, and read-only logs of finished siblings. Never the
   orchestrator's history.
 - **`state.json` is the source of truth.** `manifest.md` is rendered from it and
-  never parsed back.
+  never parsed back. [What that looks like](#state-on-disk).
+- **Credentials are per-user by default, per-repo when you need isolation.**
+  [Where your key lives](#where-your-key-lives).
 - **The orchestration loop performs no I/O.** Every side effect sits behind a
   port, which is what lets the whole pipeline be tested without a network, a
   repo, or an API key.
