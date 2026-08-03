@@ -23,7 +23,11 @@ def make_state() -> TicketState:
         pulled_at="2026-08-01T10:00:00+00:00",
         subtasks=[
             SubTask(id="TEAM-7.01", goal="Add a token bucket helper"),
-            SubTask(id="TEAM-7.02", goal="Wire it into the auth route", depends_on=["TEAM-7.01"]),
+            SubTask(
+                id="TEAM-7.02",
+                goal="Wire it into the auth route",
+                depends_on=["TEAM-7.01"],
+            ),
         ],
     )
 
@@ -75,7 +79,9 @@ def test_state_file_without_the_cost_fields_still_loads(tmp_path):
     }
     store = StateStore(tmp_path)
     store.init("TEAM-7")
-    store.state_path("TEAM-7").write_text(json.dumps(legacy, indent=2), encoding="utf-8")
+    store.state_path("TEAM-7").write_text(
+        json.dumps(legacy, indent=2), encoding="utf-8"
+    )
 
     loaded = store.load("TEAM-7")
     st = loaded.subtask("TEAM-7.01")

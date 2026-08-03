@@ -27,7 +27,10 @@ def topo_sort(graph: dict[str, list[str]]) -> list[str]:
     pointing at someone else's ticket is not ours to order.
     """
     known = set(graph)
-    deps = {node: {d for d in dependencies if d in known} for node, dependencies in graph.items()}
+    deps = {
+        node: {d for d in dependencies if d in known}
+        for node, dependencies in graph.items()
+    }
 
     ordered: list[str] = []
     remaining = dict(deps)

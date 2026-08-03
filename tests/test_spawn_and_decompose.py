@@ -24,7 +24,9 @@ from forman.spawn import (
 
 
 def test_activity_names_the_file_a_read_is_about():
-    activity = Activity(kind="tool", tool="Read", tool_input={"file_path": "src/cli.py"})
+    activity = Activity(
+        kind="tool", tool="Read", tool_input={"file_path": "src/cli.py"}
+    )
     assert describe_activity(activity) == "read src/cli.py"
 
 
@@ -73,7 +75,9 @@ def test_extract_json_ignores_surrounding_prose_and_fences():
 
 
 def test_extract_json_takes_the_last_contract_shaped_object():
-    text = '{"status": "thinking out loud"} then later {"status": "done", "summary": "ok"}'
+    text = (
+        '{"status": "thinking out loud"} then later {"status": "done", "summary": "ok"}'
+    )
     assert extract_last_json(text)["summary"] == "ok"
 
 
@@ -90,14 +94,18 @@ def test_extract_json_returns_none_when_there_is_none():
 
 
 def test_done_result():
-    run = AgentRun(text='{"status": "done", "summary": "wrote the helper"}', session_id="s1")
+    run = AgentRun(
+        text='{"status": "done", "summary": "wrote the helper"}', session_id="s1"
+    )
     result = result_from_run(run)
     assert result.ok and result.summary == "wrote the helper"
     assert result.session_id == "s1"
 
 
 def test_blocked_is_a_business_outcome_not_an_error():
-    run = AgentRun(text='{"status": "blocked", "blocked_reason": "needs a prod credential"}')
+    run = AgentRun(
+        text='{"status": "blocked", "blocked_reason": "needs a prod credential"}'
+    )
     result = result_from_run(run)
     assert result.status == SubTaskStatus.BLOCKED.value
     assert result.blocked_reason == "needs a prod credential"
@@ -140,7 +148,9 @@ def test_spawn_agent_passes_the_contract_and_the_context(tmp_path):
         captured.update(kwargs)
         return AgentRun(text='{"status": "done", "summary": "ok"}')
 
-    ticket = Ticket(identifier="TEAM-7", title="Do the thing", description="Because reasons.")
+    ticket = Ticket(
+        identifier="TEAM-7", title="Do the thing", description="Because reasons."
+    )
     result = spawn_agent(
         subtask_readme="## Goal\nAdd a helper",
         parent_ticket=ticket,
@@ -169,7 +179,9 @@ def test_spawn_agent_hands_the_activity_callback_to_the_runner(tmp_path):
     def fake_runner(**kwargs):
         captured.update(kwargs)
         # A real runner reports as it goes; this one reports once.
-        kwargs["on_activity"](Activity(kind="tool", tool="Bash", tool_input={"command": "pytest"}))
+        kwargs["on_activity"](
+            Activity(kind="tool", tool="Bash", tool_input={"command": "pytest"})
+        )
         return AgentRun(text='{"status": "done", "summary": "ok"}')
 
     spawn_agent(
@@ -258,7 +270,10 @@ def test_self_dependency_is_dropped():
 
 
 def test_circular_dependencies_fail_the_decomposition():
-    specs = [SubTaskSpec(goal="a", depends_on=["2"]), SubTaskSpec(goal="b", depends_on=["1"])]
+    specs = [
+        SubTaskSpec(goal="a", depends_on=["2"]),
+        SubTaskSpec(goal="b", depends_on=["1"]),
+    ]
     with pytest.raises(DecompositionError, match="circular"):
         order_and_number("TEAM-7", specs)
 
@@ -272,7 +287,9 @@ def test_readme_omits_optional_sections_when_empty():
     assert "## Test plan" not in body
     assert "## Likely files" not in body
     assert "## Notes for executor" not in body
-    assert body.rstrip().endswith("<!-- spawn appends below this line; never edits above it -->")
+    assert body.rstrip().endswith(
+        "<!-- spawn appends below this line; never edits above it -->"
+    )
 
 
 def test_readme_includes_optional_sections_when_real():
@@ -309,7 +326,10 @@ def test_branch_name_works_for_any_prefix():
 
 
 def test_slug_strips_punctuation_and_collapses_separators():
-    assert slugify("Fix the (broken!) OAuth   flow -- again") == "fix-the-broken-oauth-flow-again"
+    assert (
+        slugify("Fix the (broken!) OAuth   flow -- again")
+        == "fix-the-broken-oauth-flow-again"
+    )
 
 
 def test_slug_truncates_without_ending_mid_word():

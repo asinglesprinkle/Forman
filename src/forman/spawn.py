@@ -14,6 +14,7 @@ tested with a fake runner and no model calls at all.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -165,7 +166,9 @@ def _reporter(
         return lambda _blocks: None
 
     def report(blocks: Any) -> None:
-        try:
+        # Anything raised in here - the import, the block walk, the callback -
+        # is a broken display, not a broken run, so it is swallowed whole.
+        with contextlib.suppress(Exception):
             from claude_agent_sdk import (  # type: ignore[import-not-found]
                 ThinkingBlock,
                 ToolUseBlock,
@@ -182,8 +185,6 @@ def _reporter(
                     )
                 elif isinstance(block, ThinkingBlock):
                     on_activity(Activity(kind="thinking"))
-        except Exception:  # pragma: no cover - a broken display, not a broken run
-            pass
 
     return report
 
@@ -255,7 +256,10 @@ def run_agent(
                     run.turn_limit_hit = True
                 if isinstance(subtype, str) and subtype.endswith("error"):
                     run.error = f"agent session ended with subtype={subtype}"
-        except Exception as exc:  # SDK or infra failure: a `failed` result
+        # The catch has to be blind. Whatever the SDK or the infrastructure
+        # under it raises is the same thing to a caller: a run that failed,
+        # reported as one rather than as a traceback out of the orchestrator.
+        except Exception as exc:  # noqa: BLE001 - see comment above
             run.error = f"{type(exc).__name__}: {exc}"
         run.text = "\n".join(chunks).strip()
         return run
@@ -340,7 +344,9 @@ def run_conversation(
                     await client.query(reply)
                 else:
                     run.turn_limit_hit = True
-        except Exception as exc:
+        # Blind for the same reason as the one-shot runner above: any SDK or
+        # infrastructure failure is reported as a failed run, not raised.
+        except Exception as exc:  # noqa: BLE001 - see comment above
             run.error = f"{type(exc).__name__}: {exc}"
         run.text = text
         return run
@@ -374,11 +380,13 @@ def build_subtask_prompt(
             + (f": {previous_error}" if previous_error else ".")
             + "",
             "",
-            "The working tree may already contain partial changes from it. Read "
-            "the current state of the relevant files before editing anything, "
-            "keep whatever is already correct, and finish the job rather than "
-            "starting over. Check the execution log in your README for what the "
-            "previous attempt recorded.",
+            (
+                "The working tree may already contain partial changes from it. Read "
+                "the current state of the relevant files before editing anything, "
+                "keep whatever is already correct, and finish the job rather than "
+                "starting over. Check the execution log in your README for what the "
+                "previous attempt recorded."
+            ),
             "",
         ]
     parts += [
@@ -405,8 +413,10 @@ def build_subtask_prompt(
             parts += [f"## {sid}", (log or "").strip() or "(no log recorded)", ""]
     parts += [
         "",
-        "Do only what your sub-task README specifies. End with the JSON object "
-        "described in your instructions and nothing else.",
+        (
+            "Do only what your sub-task README specifies. End with the JSON object "
+            "described in your instructions and nothing else."
+        ),
     ]
     return "\n".join(parts)
 

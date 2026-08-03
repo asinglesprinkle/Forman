@@ -68,14 +68,14 @@ def make(answers, conversation=None, edit=None):
         return replies.pop(0) if replies else "q"
 
     linear = StubLinearClient()
-    kwargs = dict(
-        prose="the auth client keeps dropping sessions",
-        linear=linear,
-        ask=ask,
-        show=shown.append,
-        conversation=conversation or ScriptedConversation([DRAFT_JSON]),
-        edit=edit,
-    )
+    kwargs = {
+        "prose": "the auth client keeps dropping sessions",
+        "linear": linear,
+        "ask": ask,
+        "show": shown.append,
+        "conversation": conversation or ScriptedConversation([DRAFT_JSON]),
+        "edit": edit,
+    }
     return kwargs, linear, asked, shown
 
 

@@ -22,7 +22,12 @@ def halted_state() -> TicketState:
         status="in_progress",
         branch="team-35/persist-cost",
         subtasks=[
-            SubTask(id="TEAM-35.01", goal="one", status=SubTaskStatus.DONE.value, log="did it"),
+            SubTask(
+                id="TEAM-35.01",
+                goal="one",
+                status=SubTaskStatus.DONE.value,
+                log="did it",
+            ),
             SubTask(
                 id="TEAM-35.02",
                 goal="two",
@@ -106,7 +111,9 @@ def test_a_resumed_run_only_reruns_what_failed(tmp_path):
     store = StateStore(tmp_path)
     store.save(halted_state())
     for st in ("TEAM-35.01", "TEAM-35.02", "TEAM-35.03"):
-        store.write_subtask_readme("TEAM-35", st, f"## Goal\n{st}\n\n---\n## Execution log\n")
+        store.write_subtask_readme(
+            "TEAM-35", st, f"## Goal\n{st}\n\n---\n## Execution log\n"
+        )
 
     state = store.load("TEAM-35")
     reset_for_resume(state)
@@ -119,7 +126,9 @@ def test_a_resumed_run_only_reruns_what_failed(tmp_path):
     from forman.models import Ticket
 
     deps.linear.tickets = {
-        "TEAM-35": Ticket(identifier="TEAM-35", title="Persist and report agent session cost")
+        "TEAM-35": Ticket(
+            identifier="TEAM-35", title="Persist and report agent session cost"
+        )
     }
 
     run_once(deps, ticket_id="TEAM-35")

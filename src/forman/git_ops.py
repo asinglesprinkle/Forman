@@ -107,7 +107,9 @@ def default_branch(repo: str | Path) -> str:
     currently checked out.
     """
     if has_remote(repo):
-        ref = _run(repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD", check=False)
+        ref = _run(
+            repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD", check=False
+        )
         if ref:
             return ref.rsplit("/", 1)[-1]
     for candidate in ("main", "master", "trunk", "develop"):
@@ -204,7 +206,9 @@ def commit_all(repo: str | Path, message: str) -> CommitResult:
     if not _run(repo, "status", "--porcelain"):
         return CommitResult(created=False, message=message)
     _run(repo, "commit", "-m", message)
-    return CommitResult(created=True, sha=_run(repo, "rev-parse", "HEAD"), message=message)
+    return CommitResult(
+        created=True, sha=_run(repo, "rev-parse", "HEAD"), message=message
+    )
 
 
 def push_branch(repo: str | Path, branch: str) -> bool:
@@ -232,8 +236,19 @@ def open_pull_request(
         return PullRequest(url=None, branch=branch, title=title, body=body, manual=True)
 
     proc = subprocess.run(
-        ["gh", "pr", "create", "--base", base, "--head", branch,
-         "--title", title, "--body", body],
+        [
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            base,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
+        ],
         cwd=str(repo),
         capture_output=True,
         text=True,
@@ -243,7 +258,10 @@ def open_pull_request(
         # An existing PR for this branch is the common case on a re-run.
         existing = subprocess.run(
             ["gh", "pr", "view", branch, "--json", "url", "--jq", ".url"],
-            cwd=str(repo), capture_output=True, text=True, check=False,
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if existing.returncode == 0 and existing.stdout.strip():
             return PullRequest(
@@ -252,7 +270,13 @@ def open_pull_request(
         return PullRequest(url=None, branch=branch, title=title, body=body, manual=True)
 
     url = next(
-        (line.strip() for line in proc.stdout.splitlines() if line.strip().startswith("http")),
+        (
+            line.strip()
+            for line in proc.stdout.splitlines()
+            if line.strip().startswith("http")
+        ),
         None,
     )
-    return PullRequest(url=url, branch=branch, title=title, body=body, manual=url is None)
+    return PullRequest(
+        url=url, branch=branch, title=title, body=body, manual=url is None
+    )

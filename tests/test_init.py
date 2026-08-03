@@ -28,11 +28,13 @@ def test_mask_hides_short_secrets_entirely():
 
 
 def test_render_env_skips_empty_and_unknown_values():
-    out = render_env({
-        API_KEY_VAR: "lin_api_x",
-        TEAM_KEY_VAR: "",
-        "SOMETHING_ELSE": "nope",
-    })
+    out = render_env(
+        {
+            API_KEY_VAR: "lin_api_x",
+            TEAM_KEY_VAR: "",
+            "SOMETHING_ELSE": "nope",
+        }
+    )
     assert f"{API_KEY_VAR}=lin_api_x" in out
     assert TEAM_KEY_VAR not in out
     assert "SOMETHING_ELSE" not in out

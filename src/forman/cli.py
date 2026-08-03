@@ -190,7 +190,10 @@ def cmd_pull(args: argparse.Namespace) -> int:
         return 2
     except git_ops.GitError as exc:
         print(f"git failed: {exc}", file=sys.stderr)
-        if "could not read Username" in exc.stderr or "Authentication failed" in exc.stderr:
+        if (
+            "could not read Username" in exc.stderr
+            or "Authentication failed" in exc.stderr
+        ):
             print(
                 "\ngit cannot authenticate to the remote. If you use HTTPS remotes "
                 "and the gh CLI, run:\n\n    gh auth setup-git\n\nwhich points git's "
@@ -214,7 +217,9 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     if report.outcome == "in_review":
         print(f"\n{report.detail}")
-        print(f"pull request: {report.pr_url or '(open it by hand, see the ticket comment)'}")
+        print(
+            f"pull request: {report.pr_url or '(open it by hand, see the ticket comment)'}"
+        )
         print(f"total cost: {format_cost(report.total_cost_usd)}")
         return 0
 
@@ -253,7 +258,9 @@ def cmd_push(args: argparse.Namespace) -> int:
         print("What do you want to achieve? (one line is fine)")
         prose = input("> ").strip()
     if not prose or not prose.strip():
-        print("nothing to push: give prose as an argument or on stdin.", file=sys.stderr)
+        print(
+            "nothing to push: give prose as an argument or on stdin.", file=sys.stderr
+        )
         return 2
 
     progress = for_terminal() if interactive else None
@@ -272,9 +279,7 @@ def cmd_push(args: argparse.Namespace) -> int:
                 on_activity=progress,
             )
         else:
-            tickets = push(
-                prose=prose, linear=linear, cwd=repo, dry_run=args.dry_run
-            )
+            tickets = push(prose=prose, linear=linear, cwd=repo, dry_run=args.dry_run)
     except Aborted:
         print("nothing created.")
         return 0
@@ -454,15 +459,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"workflow states:  {', '.join(info['states']) or '(unknown)'}")
 
     try:
-        review = client.find_state(info["team_key"], "in_review") if info["team_key"] else None
-        print(f"in-review state:  {review['name']}" if review else "in-review state:  (unknown)")
+        review = (
+            client.find_state(info["team_key"], "in_review")
+            if info["team_key"]
+            else None
+        )
+        print(
+            f"in-review state:  {review['name']}"
+            if review
+            else "in-review state:  (unknown)"
+        )
     except LinearApiError as exc:
         print(f"in-review state:  NOT FOUND. {exc}")
 
     print(f"\nassigned to you ({len(info['assigned'])} shown):")
     for ticket in info["assigned"]:
         blockers = f"  blocked_by={ticket.blocked_by}" if ticket.blocked_by else ""
-        print(f"  {ticket.identifier}  [{ticket.status}/{ticket.priority}]  {ticket.title}{blockers}")
+        print(
+            f"  {ticket.identifier}  [{ticket.status}/{ticket.priority}]  {ticket.title}{blockers}"
+        )
     if not info["assigned"]:
         print("  (nothing assigned, or nothing open)")
     return 0
@@ -501,7 +516,9 @@ def cmd_resume(args: argparse.Namespace) -> int:
     store.save(state)
     for subtask_id, was in changed:
         print(f"  {subtask_id}: {was} -> pending")
-    print(f"\n{args.ticket}: {len(changed)} sub-task(s) reset. Work already done is kept.")
+    print(
+        f"\n{args.ticket}: {len(changed)} sub-task(s) reset. Work already done is kept."
+    )
 
     status = git_ops.worktree_status(repo)
     if not status.clean:
@@ -533,7 +550,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     for ticket in tickets:
         state = store.load(ticket)
         done = len(state.done_ids())
-        print(f"{state.ticket}  {state.status}  {done}/{len(state.subtasks)}  {state.branch}")
+        print(
+            f"{state.ticket}  {state.status}  {done}/{len(state.subtasks)}  {state.branch}"
+        )
     return 0
 
 
@@ -562,7 +581,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_pull.set_defaults(func=cmd_pull)
 
     p_push = sub.add_parser("push", help="turn prose into Linear tickets")
-    p_push.add_argument("prose", nargs="?", help="issue description (or pipe it on stdin)")
+    p_push.add_argument(
+        "prose", nargs="?", help="issue description (or pipe it on stdin)"
+    )
     p_push.add_argument(
         "--dry-run", action="store_true", help="show the tickets without creating them"
     )
@@ -581,7 +602,9 @@ def build_parser() -> argparse.ArgumentParser:
         "init", help="set up your Linear credentials and check they work"
     )
     p_init.add_argument(
-        "--force", action="store_true", help="overwrite an existing config without asking"
+        "--force",
+        action="store_true",
+        help="overwrite an existing config without asking",
     )
     p_init.set_defaults(func=cmd_init)
 

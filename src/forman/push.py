@@ -190,7 +190,9 @@ def to_tickets(raw: list[dict]) -> list[Ticket]:
                 priority=str(fields.get("priority") or "medium").lower(),
                 labels=[str(x) for x in fields.get("labels") or []],
                 project=fields.get("project") or None,
-                estimate=(str(fields["estimate"]).lower() if fields.get("estimate") else None),
+                estimate=(
+                    str(fields["estimate"]).lower() if fields.get("estimate") else None
+                ),
                 blocked_by=[str(x) for x in fields.get("blocked_by") or []],
                 blocks=[str(x) for x in fields.get("blocks") or []],
             )
@@ -383,7 +385,9 @@ def push_interactive(
     """
     if reviewer is None:
         if ask is None or show is None:
-            raise TypeError("push_interactive needs either reviewer, or both ask and show")
+            raise TypeError(
+                "push_interactive needs either reviewer, or both ask and show"
+            )
         reviewer = TerminalReviewer(ask=ask, show=show)
 
     rounds = 0

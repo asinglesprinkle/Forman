@@ -480,7 +480,11 @@ class GraphQLLinearClient:
                 label["name"].lower(): label["id"]
                 for label in team.get("labels", {}).get("nodes", [])
             }
-            ids = [by_name[name.lower()] for name in ticket.labels if name.lower() in by_name]
+            ids = [
+                by_name[name.lower()]
+                for name in ticket.labels
+                if name.lower() in by_name
+            ]
             if ids:
                 payload["labelIds"] = ids
         if ticket.project:
@@ -515,7 +519,9 @@ class GraphQLLinearClient:
             relatedIssueId=self.issue_id(blocked),
         )
         if not result["issueRelationCreate"]["success"]:
-            raise LinearApiError(f"Linear refused the relation {blocker} blocks {blocked}")
+            raise LinearApiError(
+                f"Linear refused the relation {blocker} blocks {blocked}"
+            )
 
     # -- diagnostics ---------------------------------------------------------
 
@@ -535,7 +541,9 @@ class GraphQLLinearClient:
             states = [s["name"] for s in self.team(team_key)["states"]["nodes"]]
         return {
             "viewer": viewer.get("email") or viewer.get("name"),
-            "actor": actor.get("displayName") or actor.get("name") or actor.get("email"),
+            "actor": actor.get("displayName")
+            or actor.get("name")
+            or actor.get("email"),
             "actor_is_viewer": actor.get("id") == viewer.get("id"),
             "teams": [t["key"] for t in teams],
             "team_key": team_key,
