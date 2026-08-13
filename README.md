@@ -34,7 +34,7 @@ on your PATH. `gh` is optional; without it Forman prints the PR body for you to
 open by hand.
 
 ```sh
-git clone https://github.com/you/forman && cd forman
+git clone https://github.com/asinglesprinkle/Forman && cd Forman
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
