@@ -170,6 +170,45 @@ def test_activity_after_a_pause_starts_the_clock_again():
         progress.done()
 
 
+def test_the_clock_comes_back_on_the_answer_not_on_the_reply_to_it():
+    """The gap a person reads as a freeze is the one right after they type.
+
+    Waiting for the agent's next activity leaves the terminal silent for as long
+    as it takes to think about the answer, immediately after asking for it.
+    """
+    out = io.StringIO()
+    clock = FakeClock()
+    progress = Progress(stream=out, clock=clock, tick=True)
+    progress.start("drafting")
+    progress.pause()
+
+    clock.now += 4
+    drawn_at_pause = out.getvalue()
+    progress.resume()
+
+    try:
+        painted = out.getvalue()[len(drawn_at_pause) :]
+        assert "0:04" in painted, f"nothing came back after the answer: {painted!r}"
+        assert "thinking" in painted
+    finally:
+        progress.done()
+
+
+def test_resuming_a_finished_session_leaves_no_clock_behind():
+    """Answering the gate ends the session; nothing is thinking after that."""
+    out = io.StringIO()
+    progress = Progress(stream=out, clock=FakeClock(), tick=True)
+    progress.start("drafting")
+    progress.pause()
+    progress.done()
+
+    after_done = out.getvalue()
+    progress.resume()
+    time.sleep(0.3)  # a ticker, had resume started one, would have drawn by now
+
+    assert out.getvalue() == after_done
+
+
 def test_ticking_is_off_by_default_so_a_pipe_gets_no_control_characters():
     out = io.StringIO()
     progress = Progress(stream=out, clock=FakeClock())

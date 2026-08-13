@@ -92,12 +92,33 @@ class Progress:
 
         An agent asks its questions from inside the session, so a prompt can
         appear while the clock is still ticking. Two writers on one line makes
-        an unreadable mess, and the prompt is the one that matters. Ticking
-        resumes by itself on the next thing the agent does.
+        an unreadable mess, and the prompt is the one that matters. `resume`
+        puts it back once the answer is in.
         """
         self._stop_ticking()
         with self._lock:
             self._erase()
+
+    def resume(self) -> None:
+        """Put the live line back as soon as an answer is in.
+
+        Waiting for the agent's next activity is too late. It has to read the
+        answer and think about it first, which is several seconds of a terminal
+        that has just finished inviting the person to type - the one moment they
+        are most certain their keystroke did not land. So the clock comes back
+        on the answer, not on the reply to it.
+
+        A no-op once the session is over, so answering a gate does not leave a
+        clock ticking under work the agent is no longer doing.
+        """
+        if self._started is None:
+            return
+        with self._lock:
+            if self._started is None:  # done() may have landed since the check
+                return
+            self._label = "thinking"
+            self._line(f"  {self._elapsed()}  {self._label}", live=True)
+        self._start_ticking()
 
     # -- the live line --------------------------------------------------------
 
@@ -196,6 +217,11 @@ def quiet_for_prompt() -> None:
         _ACTIVE.pause()
 
 
+def resume_after_prompt() -> None:
+    if _ACTIVE is not None:
+        _ACTIVE.resume()
+
+
 # -- the input queue -----------------------------------------------------------
 
 
@@ -228,7 +254,14 @@ def ask_after_agent(prompt: str) -> str:
     keys at it, which is exactly the input that must not be treated as an
     answer. Prompts that follow nothing do not go through here: there is nothing
     queued, and flushing would only discard deliberate type-ahead.
+
+    The clock comes back the moment the answer is in, because the agent's own
+    reply to it is seconds away and a silent terminal in between reads as a
+    dropped keystroke. Not on the way out of a ctrl-c or an EOF: nothing is
+    being waited for then, and a ticking line over a teardown is a lie.
     """
     quiet_for_prompt()
     drop_typeahead()
-    return input(prompt)
+    answer = input(prompt)
+    resume_after_prompt()
+    return answer
