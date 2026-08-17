@@ -283,6 +283,14 @@ def cmd_push(args: argparse.Namespace) -> int:
 
     progress = for_terminal() if interactive else None
 
+    def warn(message: str) -> None:
+        # Ordering that failed to record is the one thing worth interrupting the
+        # summary for: the tickets look fine, and the pull phase silently
+        # disagrees about what to work first.
+        if progress:
+            progress.pause()
+        print(f"warning: {message}", file=sys.stderr)
+
     try:
         linear = build_linear(repo, args.linear, label=load_settings(repo).label)
         if interactive:
@@ -295,9 +303,16 @@ def cmd_push(args: argparse.Namespace) -> int:
                 edit=_edit_in_editor,
                 cwd=repo,
                 on_activity=progress,
+                warn=warn,
             )
         else:
-            tickets = push(prose=prose, linear=linear, cwd=repo, dry_run=args.dry_run)
+            tickets = push(
+                prose=prose,
+                linear=linear,
+                cwd=repo,
+                dry_run=args.dry_run,
+                warn=warn,
+            )
     except Aborted:
         print("nothing created.")
         return 0

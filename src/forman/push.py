@@ -6,11 +6,20 @@ or more tickets. This is the only phase that writes to Linear on purpose.
 Splitting rule: separate tickets when concerns are independently shippable.
 Whenever ordering matters, blocked_by and blocks must be populated, because the
 pull phase's ticket-level topo-sort is built on exactly those fields.
+
+Those fields take two kinds of reference: a 1-based index into the batch being
+drafted, and the identifier of a ticket that already exists. The second kind is
+what lets a push depend on work filed an hour ago, and the drafting agent is
+given the open backlog so it can name one. Everything here refuses loudly rather
+than dropping a reference it cannot resolve: an ordering edge that goes missing
+between the draft and Linear is invisible until the pull phase works the wrong
+ticket first.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -41,6 +50,14 @@ PUSH_MAX_TURNS = 20
 
 MAX_QUESTION_ROUNDS = 3
 
+# How many open tickets to show the drafting agent. Enough to cover a project's
+# worth of in-flight work without turning the prompt into a backlog dump.
+BACKLOG_LIMIT = 40
+
+# `TEAM-42`. Anything matching this in blocked_by/blocks is a ticket that already
+# exists, as opposed to a 1-based index into the batch being drafted.
+_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-\d+$")
+
 _TICKET_JSON_SHAPE = """\
 Emit as your final message a single JSON object and nothing else:
 {"tickets": [{
@@ -62,9 +79,19 @@ must be observable: something a person could check without reading your mind.\
 
 _SPLIT_RULE = """\
 Splitting rule: create separate tickets when the concerns are independently \
-shippable. Otherwise create one. Do not invent work the person did not describe. \
-Whenever ordering matters, populate blocked_by and blocks using the 1-based \
-index of another ticket in your own list.\
+shippable. Otherwise create one. Do not invent work the person did not describe.
+
+Whenever ordering matters, populate blocked_by and blocks. There are two ways to \
+name a ticket there, and you may mix them freely:
+
+- a ticket in your own list, by its 1-based index: 2
+- a ticket that already exists, by its identifier: TEAM-42
+
+Ordering recorded anywhere else is invisible to the pipeline that executes these \
+tickets. A note in the context section saying "a sibling slice owns the database \
+containers", or a number in the title, will not stop the executor from picking \
+this ticket up first. If one piece of work genuinely cannot start until another \
+has landed, it has to appear in blocked_by.\
 """
 
 # One shot, no questions possible. Used for --yes and for non-interactive stdin.
@@ -97,7 +124,9 @@ the author's mind. This is what "done" will be measured against.
 4. Out of scope. What must NOT be touched. Without this, decomposition sprawls \
 and agents wander into unrelated code.
 5. Whether this is one ticket or several independently shippable ones, and if \
-several, what order they have to happen in.
+several, what order they have to happen in. Any open tickets that already exist \
+are listed for you below; if this work has to wait on one of them, that belongs \
+in blocked_by, not in prose.
 
 Answer as many of these as you can yourself by reading the repository you are \
 in. Always prefer looking over asking: a question you could have settled by \
@@ -158,9 +187,101 @@ def parse_push(text: str) -> list[dict]:
     return tickets
 
 
+def _index_ref(ref: str, count: int) -> int | None:
+    """A 1-based index into the batch being pushed, as a 0-based position."""
+    text = str(ref).strip()
+    if not text.isdigit():
+        return None
+    pos = int(text) - 1
+    return pos if 0 <= pos < count else None
+
+
+def _identifier_ref(ref: str) -> str | None:
+    """A reference to a ticket that already exists, normalised."""
+    text = str(ref).strip()
+    return text.upper() if _IDENTIFIER.match(text) else None
+
+
+def ref_problems(tickets: list[Ticket]) -> list[str]:
+    """Every ordering reference that cannot mean anything, in plain words.
+
+    Silence here used to be the entire bug. A blocked_by naming a real ticket
+    was dropped by a list comprehension that only understood indices, so the
+    ordering the drafting agent had worked out evaporated between the draft and
+    Linear — and the pull phase, reading a board with no relations on it, then
+    picked whatever it liked.
+    """
+    count = len(tickets)
+    problems: list[str] = []
+    for pos, ticket in enumerate(tickets, start=1):
+        for field_name in ("blocked_by", "blocks"):
+            for ref in getattr(ticket, field_name):
+                text = str(ref).strip()
+                if not text:
+                    continue
+                index = _index_ref(text, count)
+                if index is not None:
+                    if index == pos - 1:
+                        problems.append(
+                            f"ticket {pos} ({ticket.title!r}) lists itself in "
+                            f"{field_name}"
+                        )
+                    continue
+                if _identifier_ref(text):
+                    continue
+                problems.append(
+                    f"ticket {pos} ({ticket.title!r}) has {field_name} {text!r}, "
+                    f"which is neither an index into this batch (1-{count}) nor "
+                    "a ticket identifier like TEAM-42"
+                )
+    return problems
+
+
+def validate_refs(tickets: list[Ticket]) -> None:
+    """Refuse to create a batch whose ordering cannot be recorded.
+
+    Fatal and before creation on purpose: a bad reference should cost a
+    re-draft, not leave a half-ordered backlog behind.
+    """
+    problems = ref_problems(tickets)
+    if problems:
+        raise PushError("; ".join(problems))
+
+
+def _resolve_refs(
+    refs: list[str], identifier_for: dict[int, str], count: int
+) -> list[str]:
+    """Rewrite a ref list into real identifiers, keeping order and dropping
+    duplicates.
+
+    Indices resolve through `identifier_for`; anything that was already an
+    identifier is carried straight through, which is the whole point — a batch
+    is allowed to depend on work pushed weeks ago.
+    """
+    out: list[str] = []
+    for ref in refs:
+        text = str(ref).strip()
+        index = _index_ref(text, count)
+        if index is not None:
+            if index in identifier_for:
+                out.append(identifier_for[index])
+            continue
+        known = _identifier_ref(text)
+        if known:
+            out.append(known)
+
+    seen: set[str] = set()
+    return [ref for ref in out if not (ref in seen or seen.add(ref))]
+
+
 def _creation_order(tickets: list[dict]) -> list[int]:
     """Create blockers before the things they block, so index references can be
-    rewritten into real identifiers as we go."""
+    rewritten into real identifiers as we go.
+
+    Only index references constrain this order. A reference to a ticket that
+    already exists imposes nothing: it was created long before this batch
+    started.
+    """
     count = len(tickets)
     graph: dict[str, list[str]] = {}
     for i, t in enumerate(tickets):
@@ -292,31 +413,112 @@ def parse_drafts(text: str) -> list[Ticket]:
 # -- creation ----------------------------------------------------------------
 
 
-def create_tickets(tickets: list[Ticket], linear: LinearClient) -> list[Ticket]:
-    """Create tickets blockers-first, rewriting index references as we go."""
+def _record_relations(
+    tickets: list[Ticket],
+    linear: LinearClient,
+    warn: Callable[[str], None] | None = None,
+) -> None:
+    """Write every ordering edge to Linear, once each, in both notations.
+
+    `blocks` used to be decoration: only `blocked_by` was ever sent, so a batch
+    that expressed its ordering the other way round — the natural way for a
+    foundational ticket, which knows what it enables before those tickets have
+    been written — recorded nothing at all.
+
+    This runs after every ticket exists rather than during creation, so a
+    `blocks` pointing forward at a sibling still to be created is recordable.
+    """
+    edges: list[tuple[str, str]] = []
+    for ticket in tickets:
+        edges += [(blocker, ticket.identifier) for blocker in ticket.blocked_by]
+        edges += [(ticket.identifier, blocked) for blocked in ticket.blocks]
+
+    seen: set[tuple[str, str]] = set()
+    for blocker, blocked in edges:
+        if not blocker or not blocked or blocker == blocked:
+            continue
+        if (blocker, blocked) in seen:
+            continue
+        seen.add((blocker, blocked))
+        try:
+            linear.relate_blocks(blocker, blocked)
+        except Exception as exc:  # noqa: BLE001 - the backend's error, whatever it is
+            # The tickets exist by now, so a refused relation cannot undo the
+            # push. It must not pass unnoticed either: a lost edge is lost
+            # ordering, and the pull phase will cheerfully work the wrong
+            # ticket next with no sign anything went missing.
+            if warn:
+                warn(f"could not record that {blocker} blocks {blocked}: {exc}")
+
+
+def create_tickets(
+    tickets: list[Ticket],
+    linear: LinearClient,
+    warn: Callable[[str], None] | None = None,
+) -> list[Ticket]:
+    """Create tickets blockers-first, then record the ordering between them."""
+    validate_refs(tickets)
+    count = len(tickets)
     order = _creation_order([{"blocked_by": t.blocked_by} for t in tickets])
     identifier_for: dict[int, str] = {}
 
     for pos in order:
         ticket = tickets[pos]
-        ticket.blocked_by = [
-            identifier_for[int(ref) - 1]
-            for ref in ticket.blocked_by
-            if str(ref).isdigit() and (int(ref) - 1) in identifier_for
-        ]
+        # Every index this ticket names is already in `identifier_for`, because
+        # `order` put its blockers first. Identifier references pass through.
+        ticket.blocked_by = _resolve_refs(ticket.blocked_by, identifier_for, count)
         made = linear.create(ticket)
         identifier_for[pos] = made.identifier
 
-    # `blocks` mirrors `blocked_by`; resolve it now every ticket has an id, so
-    # the objects we hand back are self-consistent.
+    # `blocks` points forward, so it can only be resolved once every ticket in
+    # the batch has an identifier.
     for ticket in tickets:
-        ticket.blocks = [
-            identifier_for[int(ref) - 1]
-            for ref in ticket.blocks
-            if str(ref).isdigit() and (int(ref) - 1) in identifier_for
-        ]
+        ticket.blocks = _resolve_refs(ticket.blocks, identifier_for, count)
 
+    _record_relations(tickets, linear, warn)
     return [tickets[pos] for pos in sorted(identifier_for)]
+
+
+def _natural_key(identifier: str) -> tuple[str, int]:
+    prefix, _, number = identifier.rpartition("-")
+    return (prefix, int(number)) if number.isdigit() else (identifier, 0)
+
+
+def backlog_digest(linear: LinearClient) -> str:
+    """The open backlog, rendered for the drafting agent.
+
+    Without this, an agent cannot reference work that already exists, so a
+    ticket that depends on one pushed an hour ago records the dependency as
+    English in its context section and nowhere the pipeline can act on. The
+    agent has always been able to read the repository; this lets it read the
+    board too.
+
+    A backlog it cannot fetch is not worth failing a draft over.
+    """
+    try:
+        tickets = [
+            t for t in linear.list_assigned() if t.identifier and not t.is_done()
+        ]
+    except Exception:  # noqa: BLE001 - drafting is more useful than the listing
+        return ""
+    if not tickets:
+        return ""
+
+    tickets.sort(key=lambda t: _natural_key(t.identifier))
+    rows = [f"{t.identifier}  [{t.status}]  {t.title}" for t in tickets[:BACKLOG_LIMIT]]
+    return (
+        "These tickets already exist and are still open. If what you are "
+        "drafting cannot start until one of them has landed, put that "
+        "identifier in blocked_by:\n\n" + "\n".join(rows)
+    )
+
+
+def _opening(lead: str, prose: str, linear: LinearClient) -> str:
+    parts = [f"{lead}\n\n{prose.strip()}"]
+    digest = backlog_digest(linear)
+    if digest:
+        parts.append(digest)
+    return "\n\n".join(parts)
 
 
 def push(
@@ -327,10 +529,11 @@ def push(
     runner: Callable[..., AgentRun] = run_agent,
     model: str | None = DEFAULT_MODEL,
     dry_run: bool = False,
+    warn: Callable[[str], None] | None = None,
 ) -> list[Ticket]:
     """Turn prose into tickets, and create them unless dry_run is set."""
     run = runner(
-        prompt=f"Turn this into Linear tickets:\n\n{prose.strip()}",
+        prompt=_opening("Turn this into Linear tickets:", prose, linear),
         system_prompt=PUSH_CONTRACT,
         cwd=cwd,
         allowed_tools=READ_ONLY_TOOLS,
@@ -342,8 +545,9 @@ def push(
 
     tickets = to_tickets(parse_push(run.text))
     if dry_run:
+        validate_refs(tickets)  # say so now, not on the run that does create them
         return tickets
-    return create_tickets(tickets, linear)
+    return create_tickets(tickets, linear, warn)
 
 
 # -- interactive -------------------------------------------------------------
@@ -365,6 +569,7 @@ def push_interactive(
     conversation: Callable[..., AgentRun] = run_conversation,
     model: str | None = DEFAULT_MODEL,
     on_activity: Callable[[Activity], None] | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> list[Ticket]:
     """Talk it through, show the draft, then create only once told to.
 
@@ -404,7 +609,7 @@ def push_interactive(
 
     run = conversation(
         system_prompt=PUSH_CONVERSATION_CONTRACT,
-        opening=f"Here is what I want to achieve:\n\n{prose.strip()}",
+        opening=_opening("Here is what I want to achieve:", prose, linear),
         respond=respond,
         cwd=cwd,
         allowed_tools=READ_ONLY_TOOLS,
@@ -418,12 +623,18 @@ def push_interactive(
     tickets = to_tickets(parse_push(run.text))
 
     while True:
+        # Shown rather than raised: the reviewer can edit the draft or ask for a
+        # redraft, both of which fix this. create_tickets still refuses if they
+        # approve it anyway.
+        for problem in ref_problems(tickets):
+            reviewer.show(f"Ordering problem: {problem}")
+
         decision = reviewer.decide(
             Approval(tickets=tickets, rendered=render_drafts(tickets))
         )
 
         if decision.action == CREATE:
-            return create_tickets(tickets, linear)
+            return create_tickets(tickets, linear, warn)
 
         if decision.action == QUIT:
             raise Aborted("nothing created")
@@ -445,7 +656,7 @@ def push_interactive(
         run = conversation(
             system_prompt=PUSH_CONVERSATION_CONTRACT,
             opening=(
-                f"Here is what I want to achieve:\n\n{prose.strip()}\n\n"
+                _opening("Here is what I want to achieve:", prose, linear) + "\n\n"
                 f"You drafted:\n\n{render_drafts(tickets)}\n\n"
                 f"Revise it: {decision.feedback}\n\n"
                 "Redraft now; do not ask more questions."
@@ -470,6 +681,7 @@ def summarize(tickets: list[Ticket]) -> str:
                 "title": t.title,
                 "priority": t.priority,
                 "blocked_by": t.blocked_by,
+                "blocks": t.blocks,
             }
             for t in tickets
         ],

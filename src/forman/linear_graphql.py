@@ -674,13 +674,11 @@ class GraphQLLinearClient:
         ticket.url = created.get("url")
         self._issue_ids[ticket.identifier] = created["id"]
 
-        # Ordering only counts if it exists in Linear, since the pull phase's
-        # ticket-level sort reads exactly these relations back.
-        for blocker in ticket.blocked_by:
-            try:
-                self.relate_blocks(blocker, ticket.identifier)
-            except LinearApiError:
-                pass  # a missing blocker should not undo a created ticket
+        # Relations are not written here. `blocks` points forward at tickets the
+        # push phase has not created yet, so the whole batch has to exist before
+        # any edge can be recorded; push.create_tickets does it once everything
+        # has an identifier, and reports what Linear refused instead of
+        # swallowing it.
         return ticket
 
     def relate_blocks(self, blocker: str, blocked: str) -> None:

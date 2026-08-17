@@ -168,6 +168,14 @@ is a conversation.
 and redrafts. `forman push "prose" --yes` skips all of it and files in one
 shot, which is also what happens automatically when stdin is not a terminal.
 
+Ordering is part of the draft, in `blocked_by` and `blocks`. A ticket in the
+same push is named by its 1-based index; a ticket that already exists is named
+by its identifier, and the drafting agent is shown your open backlog so it can
+do that. Both directions are recorded, so it does not matter which end of the
+edge the draft states it from. A reference that resolves to neither is refused
+before anything is created — ordering that only exists as prose in the context
+section is invisible to `pull`, which reads the relations and nothing else.
+
 `doctor` is the one to reach for when something looks wrong. It prints who you
 authenticated as, your teams and workflow states, which states it will use for
 in-progress and for the gate, and the tickets currently assigned to you —

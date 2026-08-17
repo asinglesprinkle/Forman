@@ -47,6 +47,15 @@ class LinearClient(Protocol):
         """Create a ticket from the push phase. Returns it with its identifier."""
         ...
 
+    def relate_blocks(self, blocker: str, blocked: str) -> None:
+        """Record that `blocker` blocks `blocked`.
+
+        Ordering only counts if it exists here: the pull phase's ticket-level
+        sort reads exactly these relations back, and knows nothing about what a
+        ticket's prose says it depends on.
+        """
+        ...
+
 
 # -- stub --------------------------------------------------------------------
 
@@ -71,6 +80,7 @@ class StubLinearClient:
         self.tickets: dict[str, Ticket] = {t.identifier: t for t in (tickets or [])}
         self.comments: list[tuple[str, str]] = []
         self.status_changes: list[tuple[str, str]] = []
+        self.relations: list[tuple[str, str]] = []
         self._next_number = next_number
         self._default_prefix = default_prefix
         if self.path and self.path.is_file() and not tickets:
@@ -83,6 +93,7 @@ class StubLinearClient:
         self.tickets = {t["identifier"]: Ticket(**t) for t in raw.get("tickets", [])}
         self.comments = [tuple(c) for c in raw.get("comments", [])]  # type: ignore[misc]
         self.status_changes = [tuple(s) for s in raw.get("status_changes", [])]  # type: ignore[misc]
+        self.relations = [tuple(r) for r in raw.get("relations", [])]  # type: ignore[misc]
         self._next_number = raw.get("next_number", self._next_number)
 
     def _save(self) -> None:
@@ -95,6 +106,7 @@ class StubLinearClient:
                     "tickets": [asdict(t) for t in self.tickets.values()],
                     "comments": [list(c) for c in self.comments],
                     "status_changes": [list(s) for s in self.status_changes],
+                    "relations": [list(r) for r in self.relations],
                     "next_number": self._next_number,
                 },
                 indent=2,
@@ -131,6 +143,20 @@ class StubLinearClient:
         self.tickets[ticket.identifier] = ticket
         self._save()
         return ticket
+
+    def relate_blocks(self, blocker: str, blocked: str) -> None:
+        """Record the edge on both tickets, so a stub pull sorts like a real one.
+
+        A relation naming a ticket this stub has never seen is still recorded:
+        the real backend accepts one too, and `blocked_by` pointing outside the
+        known set is exactly the case the ticket-level sort has to handle.
+        """
+        self.relations.append((blocker, blocked))
+        if blocker in self.tickets and blocked not in self.tickets[blocker].blocks:
+            self.tickets[blocker].blocks.append(blocked)
+        if blocked in self.tickets and blocker not in self.tickets[blocked].blocked_by:
+            self.tickets[blocked].blocked_by.append(blocker)
+        self._save()
 
 
 def stub_path(repo_root: str | Path) -> Path:
