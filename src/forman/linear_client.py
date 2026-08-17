@@ -64,8 +64,10 @@ class StubLinearClient:
         path: str | Path | None = None,
         next_number: int = 100,
         default_prefix: str = "TEAM",
+        label: str | None = None,
     ) -> None:
         self.path = Path(path) if path else None
+        self.label = label
         self.tickets: dict[str, Ticket] = {t.identifier: t for t in (tickets or [])}
         self.comments: list[tuple[str, str]] = []
         self.status_changes: list[tuple[str, str]] = []
@@ -122,6 +124,10 @@ class StubLinearClient:
         if not ticket.identifier:
             ticket.identifier = f"{self._default_prefix}-{self._next_number}"
             self._next_number += 1
+        # Same provenance mark the real backend stamps, so a stub run's tickets
+        # are visible to a stub pull instead of being filtered straight out.
+        if self.label and not ticket.has_label(self.label):
+            ticket.labels.append(self.label)
         self.tickets[ticket.identifier] = ticket
         self._save()
         return ticket

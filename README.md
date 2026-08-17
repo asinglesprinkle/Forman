@@ -20,10 +20,10 @@ It never merges anything and never marks a ticket done. Every run ends at a huma
 description against what the pipeline actually needs to run, asks only for the
 gaps, then shows you the drafted ticket. Nothing is filed until you say so.
 
-**Pull.** `forman pull` picks a ticket, decomposes it into local sub-tasks, and
-runs them one at a time in fresh agent sessions. It commits after each finished
-sub-task, then opens a PR, comments the link on the ticket, moves the ticket to
-in-review, and stops.
+**Pull.** `forman pull` picks a ticket it created, moves it to in-progress,
+decomposes it into local sub-tasks, and runs them one at a time in fresh agent
+sessions. It commits after each finished sub-task, then opens a PR, comments the
+link on the ticket, moves the ticket to in-review, and stops.
 
 Linear only ever sees tickets. Sub-tasks are local: files on disk plus git state.
 
@@ -94,10 +94,40 @@ the codebase; more than one board just means more than one directory.
 ```sh
 forman doctor                    # read-only: what can Forman see?
 forman push                      # talk through a ticket, then file it
-forman pull                      # work the next ready ticket
-forman pull --ticket ABC-42      # or work a specific one
+forman pull                      # work the next ready ticket Forman filed
+forman pull --ticket ABC-42      # or work a specific one, whoever filed it
+forman pull --any                # or consider your whole assigned backlog
 forman status                    # what Forman has in flight here
 ```
+
+### Which tickets `pull` will start
+
+By default, only ones Forman filed itself. `forman push` labels everything it
+creates `forman`, and `forman pull` will only *select* tickets carrying that
+label.
+
+The point is narrow: a project manager who files twenty tickets on you while
+you are mid-run should not be able to start an unsupervised coding session. It
+is a speed bump, not a wall, and there are three ways past it:
+
+- **add the `forman` label** to a ticket in Linear — that opts it in for good.
+- **`--ticket ABC-42`** works anything by name. Naming a ticket is a deliberate
+  act, so the label does not apply; the run says in its notes that it went
+  ahead anyway.
+- **`--any`** drops the filter for one run and considers your whole assigned
+  backlog, which is what every version before this did.
+
+Rename the label with `FORMAN_LABEL`. It is created on your team the first time
+`forman push` needs it. Tickets are still always *stamped* on creation even
+under `--any`, so a run started that way does not file work a later default run
+would refuse to see.
+
+An unlabelled ticket still counts as a blocker: if a `forman` ticket is blocked
+by somebody else's open ticket, it stays put. The filter narrows what gets
+worked, not what counts as a dependency.
+
+`forman doctor` marks assigned tickets with `*` when they carry the label, so
+"why did it say there was nothing to do?" is one command away.
 
 ### Writing a ticket
 
@@ -139,21 +169,36 @@ and redrafts. `forman push "prose" --yes` skips all of it and files in one
 shot, which is also what happens automatically when stdin is not a terminal.
 
 `doctor` is the one to reach for when something looks wrong. It prints who you
-authenticated as, your teams and workflow states, which state it will use for
-the gate, and the tickets currently assigned to you.
+authenticated as, your teams and workflow states, which states it will use for
+in-progress and for the gate, and the tickets currently assigned to you —
+marking the ones `forman pull` is willing to start.
 
 ## What a run actually does
 
-1. Picks a ticket assigned to you whose blockers are all done, highest priority
-   first, then whichever unblocks the most other work.
+1. Picks a ticket assigned to you, carrying the `forman` label, whose blockers
+   are all done — highest priority first, then whichever unblocks the most
+   other work.
 2. Checks out the default branch (detected, never assumed to be `main`), pulls,
    and **aborts if your tree is dirty**. It will not stash your work.
 3. Cuts `<team-key>-<number>/<title-slug>`, so `ABC-42` titled "Add rate limiting"
    becomes `abc-42/add-rate-limiting`.
-4. Decomposes the ticket into sub-task briefs under `.forman/<TICKET>/`.
-5. Runs them serially, committing after each one, so a mid-run failure leaves a
+4. Moves the ticket to in-progress, so the board is honest for the minutes and
+   hours the run takes.
+5. Decomposes the ticket into sub-task briefs under `.forman/<TICKET>/`.
+6. Runs them serially, committing after each one, so a mid-run failure leaves a
    clean, readable tree.
-6. Opens the PR, comments it on the ticket, sets the ticket to in-review, stops.
+7. Opens the PR, comments it on the ticket, sets the ticket to in-review, stops.
+
+The in-progress move is a courtesy to everyone not watching your terminal, and
+never fatal: a board with no matching workflow state gets a note in the run
+output, not a failed run. Forman matches an exact name, then a substring, then
+the leftmost column in Linear's "started" group that is not a review state —
+so `Doing`, `WIP` and `Building` all work without configuration. Name it
+explicitly with `LINEAR_PROGRESS_STATE` if yours is stranger than that.
+
+A halted run leaves the ticket in-progress rather than putting it back. It is
+still your work in flight, and the column is the signal that somebody should
+come and look.
 
 If something blocks, it comments what got in the way and leaves the ticket alone.
 Fix the blocker, run again, and it skips whatever already finished.
@@ -254,7 +299,9 @@ Nearest wins; the shell always beats a file.
 | `LINEAR_API_KEY` | yes | Personal API key from Linear settings |
 | `LINEAR_TEAM_KEY` | no | Which team to create issues on, if more than one is visible |
 | `LINEAR_REVIEW_STATE` | no | Exact workflow state for the gate. Any state containing "review" is matched by default |
+| `LINEAR_PROGRESS_STATE` | no | Exact workflow state for a run in flight. Linear's "started" group is used by default |
 | `LINEAR_USER` | no | Act as someone else. Unset, identity comes from the API key, which cannot drift when a name changes |
+| `FORMAN_LABEL` | no | The provenance label, `forman` by default. [What it gates](#which-tickets-pull-will-start) |
 
 Which file wins, and why the per-repo one isolates a key from every other
 checkout, is [above](#where-your-key-lives).
@@ -263,6 +310,8 @@ checkout, is [above](#where-your-key-lives).
 
 - **Serial execution.** No parallelism, no locking. The simplest correct model.
 - **One human gate per ticket**, at PR-open. Never auto-merge, never mark done.
+- **Only its own work by default.** A ticket Forman did not file does not start
+  a run on its own. [Why, and how to override it](#which-tickets-pull-will-start).
 - **Sub-tasks stay local.** Linear sees tickets, nothing else.
 - **Fresh context per sub-task.** Each agent gets its own brief, the parent
   ticket, relevant paths, and read-only logs of finished siblings. Never the

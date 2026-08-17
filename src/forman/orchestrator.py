@@ -96,12 +96,35 @@ class Deps:
     spawn: SpawnPort
     now: Callable[[], str] = iso_now
     attempts: int = SPAWN_ATTEMPTS
+    # Provenance filter. Set, the loop only ever selects tickets carrying this
+    # label; None works the whole assigned backlog, which is what it did before
+    # the label existed. Naming a ticket explicitly overrides it either way.
+    label: str | None = None
 
 
 # -- ticket selection (pure) -------------------------------------------------
 
 
-def select_ticket(tickets: list[Ticket]) -> Ticket | None:
+def workable(tickets: list[Ticket]) -> list[Ticket]:
+    """Tickets that are neither finished nor parked at the human gate."""
+    return [
+        t
+        for t in tickets
+        if not t.is_done() and t.status != TicketStatus.IN_REVIEW.value
+    ]
+
+
+def unmarked(tickets: list[Ticket], label: str) -> list[Ticket]:
+    """Workable tickets the label filter will pass over.
+
+    Only used to say so out loud. A filter that quietly finds nothing is
+    indistinguishable from an empty backlog, and that is exactly the shape of
+    bug someone spends an afternoon on.
+    """
+    return [t for t in workable(tickets) if not t.has_label(label)]
+
+
+def select_ticket(tickets: list[Ticket], label: str | None = None) -> Ticket | None:
     """Pick the next ticket to work.
 
     Only tickets whose every known blocker is done are eligible. A `blocked_by`
@@ -109,14 +132,16 @@ def select_ticket(tickets: list[Ticket]) -> Ticket | None:
     is not ours to order. Tickets already sitting at `in_review` are skipped,
     because those are waiting on a human, not on us.
 
+    With `label` set, only tickets carrying it can be chosen. The filter is
+    applied after the readiness check rather than before it, so an unlabelled
+    open ticket still holds back the labelled one that waits on it. Narrowing
+    the graph instead would have made that blocker vanish, and a vanished
+    blocker reads as a satisfied one.
+
     Tie-break is a plain sort for v1: priority first, then how many other
     tickets this one unblocks, then identifier for determinism.
     """
-    live = [
-        t
-        for t in tickets
-        if not t.is_done() and t.status != TicketStatus.IN_REVIEW.value
-    ]
+    live = workable(tickets)
     if not live:
         return None
 
@@ -125,6 +150,8 @@ def select_ticket(tickets: list[Ticket]) -> Ticket | None:
     graph = {t.identifier: list(t.blocked_by) for t in live}
 
     ready = ready_nodes(graph, satisfied=done)
+    if label:
+        ready = [tid for tid in ready if by_id[tid].has_label(label)]
     if not ready:
         return None
 
@@ -223,6 +250,8 @@ def run_once(deps: Deps, ticket_id: str | None = None) -> RunReport:
     Returns a report. Raises only for conditions that mean we should not have
     started at all, such as a dirty working tree.
     """
+    notes: list[str] = []
+
     if ticket_id:
         ticket = deps.linear.get(ticket_id)
         if ticket.is_done():
@@ -231,17 +260,62 @@ def run_once(deps: Deps, ticket_id: str | None = None) -> RunReport:
                 outcome="no_work",
                 detail=f"{ticket_id} is already finished",
             )
+        # Naming a ticket is the escape hatch from the label, not an exception
+        # the tool should keep to itself.
+        if deps.label and not ticket.has_label(deps.label):
+            notes.append(
+                f"{ticket_id} does not carry the '{deps.label}' label. Working it "
+                "anyway because you asked for it by name."
+            )
     else:
-        ticket = select_ticket(deps.linear.list_assigned())
-    if ticket is None:
-        return RunReport(outcome="no_work", detail="no ready ticket assigned to me")
+        assigned = deps.linear.list_assigned()
+        ticket = select_ticket(assigned, label=deps.label)
+        if ticket is None:
+            return _nothing_ready(deps, assigned)
 
-    state = _prepare(deps, ticket)
+    state = _prepare(deps, ticket, notes)
     _execute(deps, ticket, state)
-    return _finalize(deps, ticket, state)
+    return _finalize(deps, ticket, state, notes)
 
 
-def _prepare(deps: Deps, ticket: Ticket) -> TicketState:
+def _nothing_ready(deps: Deps, assigned: list[Ticket]) -> RunReport:
+    """The no-work report, saying whether the label is why."""
+    detail = "no ready ticket assigned to me"
+    if deps.label:
+        passed_over = unmarked(assigned, deps.label)
+        if passed_over:
+            shown = ", ".join(t.identifier for t in passed_over[:5])
+            more = f" and {len(passed_over) - 5} more" if len(passed_over) > 5 else ""
+            detail = (
+                f"no ready ticket carrying the '{deps.label}' label. Skipped "
+                f"{len(passed_over)} without it ({shown}{more}). Add the label in "
+                "Linear to opt one in, name it with --ticket, or use --any."
+            )
+    return RunReport(outcome="no_work", detail=detail)
+
+
+def _mark_in_progress(deps: Deps, ticket: Ticket, notes: list[str]) -> None:
+    """Move the ticket into the team's in-flight column.
+
+    Nothing in the pipeline reads this back; it is for the people who are not
+    watching the terminal. While a run is going, the ticket is the only place a
+    colleague can see that the work is already underway.
+
+    Never fatal, for the same reason the in-review move at the gate is not: a
+    board with no matching workflow state must not turn a workable ticket into
+    a failed run.
+    """
+    if ticket.status == TicketStatus.IN_PROGRESS.value:
+        return
+    try:
+        deps.linear.set_status(ticket.identifier, TicketStatus.IN_PROGRESS.value)
+    except Exception as exc:  # noqa: BLE001 - see above
+        notes.append(f"could not move the ticket to in-progress: {exc}")
+        return
+    ticket.status = TicketStatus.IN_PROGRESS.value
+
+
+def _prepare(deps: Deps, ticket: Ticket, notes: list[str]) -> TicketState:
     """Get onto the ticket branch with a decomposed, seeded state.
 
     Resuming an existing ticket re-uses its branch and its state.json, which is
@@ -254,6 +328,7 @@ def _prepare(deps: Deps, ticket: Ticket) -> TicketState:
         deps.git.create_branch(state.branch)  # checks out the existing branch
         state.status = TicketStatus.IN_PROGRESS.value
         deps.store.save(state)
+        _mark_in_progress(deps, ticket, notes)
         return state
 
     deps.git.sync_default_branch()
@@ -268,6 +343,11 @@ def _prepare(deps: Deps, ticket: Ticket) -> TicketState:
         pulled_at=deps.now(),
     )
     deps.store.save(state)
+
+    # Before decomposition, not after: decomposition is a model session that
+    # can run for minutes, and the whole point of the move is that the board
+    # is honest while the work is happening.
+    _mark_in_progress(deps, ticket, notes)
 
     state.subtasks = deps.decompose(ticket)
     state.status = TicketStatus.IN_PROGRESS.value
@@ -385,19 +465,27 @@ def _spawn_with_retry(
     return result
 
 
-def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
+def _finalize(
+    deps: Deps, ticket: Ticket, state: TicketState, notes: list[str] | None = None
+) -> RunReport:
     """Open the PR and stop, or report what got in the way.
 
     This is the gate. Nothing past this point is automated.
     """
+    notes = list(notes or [])
+
     if not state.all_done():
         deps.store.save(state)
         deps.linear.comment(ticket.identifier, halt_comment(ticket, state))
+        # Deliberately left in the in-flight column. A halted ticket is still
+        # this run's work in progress, and moving it back would erase the one
+        # signal on the board that says somebody should come and look.
         return RunReport(
             ticket=ticket.identifier,
             outcome="halted",
             branch=state.branch,
             detail="sub-tasks remain blocked, failed, or unreachable",
+            notes=notes,
             subtasks=_subtask_rows(state),
             total_cost_usd=total_cost_usd(state),
         )
@@ -417,7 +505,6 @@ def _finalize(deps: Deps, ticket: Ticket, state: TicketState) -> RunReport:
     state.status = TicketStatus.IN_REVIEW.value
     deps.store.save(state)
 
-    notes: list[str] = []
     if pr.manual:
         deps.linear.comment(
             ticket.identifier,

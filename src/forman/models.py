@@ -73,6 +73,16 @@ class Ticket:
     def is_done(self) -> bool:
         return self.status.lower() in {"done", "completed", "merged", "closed"}
 
+    def has_label(self, name: str) -> bool:
+        """Case-insensitively, does this ticket carry `name`?
+
+        Linear label names are free text and people type them by hand, so
+        matching on case would make `Forman` and `forman` two different marks
+        and quietly hide a ticket somebody meant to opt in.
+        """
+        wanted = name.strip().lower()
+        return any(label.strip().lower() == wanted for label in self.labels)
+
 
 @dataclass
 class SubTask:

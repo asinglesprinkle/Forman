@@ -192,7 +192,7 @@ def test_missing_data_is_an_error():
 # -- state lookup ------------------------------------------------------------
 
 
-def team_response(states):
+def team_response(states, labels=()):
     return {
         "data": {
             "teams": {
@@ -202,7 +202,7 @@ def team_response(states):
                         "key": "TEAM",
                         "name": "Engineering",
                         "states": {"nodes": states},
-                        "labels": {"nodes": []},
+                        "labels": {"nodes": list(labels)},
                     }
                 ]
             }
@@ -239,6 +239,78 @@ def test_find_state_fails_loudly_with_the_real_state_names():
     c = client(team_response(states))
     with pytest.raises(LinearApiError, match="Shipped"):
         c.find_state("TEAM", "in_review")
+
+
+# -- in-progress lookup ------------------------------------------------------
+
+
+def test_a_review_override_does_not_hijack_the_in_progress_move():
+    """The one that would have been silent and wrong.
+
+    An override used to apply to every lookup, which was harmless while
+    in-review was the only state the pipeline set. Now that a run also moves
+    the ticket on the way in, an unscoped override would have sent that move
+    straight to the review column and skipped the work state entirely.
+    """
+    states = [
+        {"id": "s1", "name": "In Progress", "type": "started", "position": 1},
+        {"id": "s2", "name": "Ready to ship", "type": "started", "position": 2},
+    ]
+    c = client(team_response(states), review_state="Ready to ship")
+
+    assert c.find_state("TEAM", "in_progress")["id"] == "s1"
+    assert c.find_state("TEAM", "in_review")["id"] == "s2"
+
+
+def test_in_progress_honours_its_own_override():
+    states = [
+        {"id": "s1", "name": "In Progress", "type": "started", "position": 1},
+        {"id": "s2", "name": "Cole is on it", "type": "started", "position": 2},
+    ]
+    c = client(team_response(states), progress_state="Cole is on it")
+    assert c.find_state("TEAM", "in_progress")["id"] == "s2"
+
+
+def test_in_progress_falls_back_to_linears_started_group():
+    # Teams call it Doing, WIP, Active. The name is a coin flip; the `started`
+    # type is not.
+    states = [
+        {"id": "s0", "name": "Todo", "type": "unstarted", "position": 0},
+        {"id": "s1", "name": "Doing", "type": "started", "position": 1},
+        {"id": "s2", "name": "Done", "type": "completed", "position": 2},
+    ]
+    c = client(team_response(states))
+    assert c.find_state("TEAM", "in_progress")["id"] == "s1"
+
+
+def test_the_started_fallback_never_picks_a_review_column():
+    """Review states share the `started` type. Landing there would announce a
+    ticket as ready for review before a line of code was written."""
+    states = [
+        {"id": "s1", "name": "In Review", "type": "started", "position": 2},
+        {"id": "s2", "name": "WIP", "type": "started", "position": 1},
+    ]
+    c = client(team_response(states))
+    assert c.find_state("TEAM", "in_progress")["id"] == "s2"
+
+
+def test_the_started_fallback_takes_the_leftmost_column():
+    states = [
+        {"id": "s2", "name": "Ready for QA", "type": "started", "position": 3},
+        {"id": "s1", "name": "Building", "type": "started", "position": 1},
+    ]
+    c = client(team_response(states))
+    assert c.find_state("TEAM", "in_progress")["id"] == "s1"
+
+
+def test_a_board_with_no_in_flight_column_says_which_var_to_set():
+    states = [
+        {"id": "s0", "name": "Todo", "type": "unstarted", "position": 0},
+        {"id": "s2", "name": "Done", "type": "completed", "position": 1},
+    ]
+    c = client(team_response(states))
+    with pytest.raises(LinearApiError, match="LINEAR_PROGRESS_STATE"):
+        c.find_state("TEAM", "in_progress")
 
 
 # -- mutations ---------------------------------------------------------------
@@ -343,6 +415,115 @@ def test_create_maps_priority_and_returns_the_identifier():
     assert made.url == "http://x/TEAM-42"
     assert transport.calls[-1][1]["input"]["priority"] == 1
     assert transport.calls[-1][1]["input"]["teamId"] == "uuid-team"
+
+
+# -- the provenance label ----------------------------------------------------
+
+
+def label_created(id_="uuid-label", name="forman"):
+    return {
+        "data": {
+            "issueLabelCreate": {
+                "success": True,
+                "issueLabel": {"id": id_, "name": name},
+            }
+        }
+    }
+
+
+FORMAN_LABEL_NODE = {"id": "uuid-label", "name": "forman"}
+
+
+def test_an_existing_label_is_reused_rather_than_recreated():
+    transport = FakeTransport(
+        [team_response([], [FORMAN_LABEL_NODE]), VIEWER, create_response()]
+    )
+    c = GraphQLLinearClient(
+        api_key="k", team_key="TEAM", label="forman", transport=transport
+    )
+    c.create(Ticket(identifier="", title="New thing"))
+
+    assert not any("issueLabelCreate" in q for q, _ in transport.calls)
+    assert transport.calls[-1][1]["input"]["labelIds"] == ["uuid-label"]
+
+
+def test_a_missing_label_is_created_rather_than_dropped():
+    """Unknown labels are normally dropped so a drafting agent cannot conjure
+    "tech-debt" into somebody's workspace. This one is the exception: a filter
+    keyed on a label that does not exist matches nothing, forever."""
+    transport = FakeTransport(
+        [team_response([]), VIEWER, label_created(), create_response()]
+    )
+    c = GraphQLLinearClient(
+        api_key="k", team_key="TEAM", label="forman", transport=transport
+    )
+    made = c.create(Ticket(identifier="", title="New thing"))
+
+    assert any("issueLabelCreate" in q for q, _ in transport.calls)
+    assert transport.calls[-1][1]["input"]["labelIds"] == ["uuid-label"]
+    # And the returned object knows it, so `forman push` prints the truth.
+    assert made.has_label("forman")
+
+
+def test_the_label_is_created_once_across_several_tickets():
+    """Linear rejects a duplicate label name, so a second create in the same
+    run has to see the first one."""
+    transport = FakeTransport(
+        [
+            team_response([]),
+            VIEWER,
+            label_created(),
+            create_response("TEAM-1"),
+            create_response("TEAM-2"),
+        ]
+    )
+    c = GraphQLLinearClient(
+        api_key="k", team_key="TEAM", label="forman", transport=transport
+    )
+    c.create(Ticket(identifier="", title="One"))
+    c.create(Ticket(identifier="", title="Two"))
+
+    assert sum("issueLabelCreate" in q for q, _ in transport.calls) == 1
+
+
+def test_the_mark_rides_alongside_the_agents_own_labels():
+    transport = FakeTransport(
+        [
+            team_response(
+                [], [FORMAN_LABEL_NODE, {"id": "uuid-be", "name": "backend"}]
+            ),
+            VIEWER,
+            create_response(),
+        ]
+    )
+    c = GraphQLLinearClient(
+        api_key="k", team_key="TEAM", label="forman", transport=transport
+    )
+    c.create(Ticket(identifier="", title="New thing", labels=["backend"]))
+
+    assert transport.calls[-1][1]["input"]["labelIds"] == ["uuid-be", "uuid-label"]
+
+
+def test_labels_the_team_does_not_have_are_still_dropped():
+    transport = FakeTransport(
+        [team_response([], [FORMAN_LABEL_NODE]), VIEWER, create_response()]
+    )
+    c = GraphQLLinearClient(
+        api_key="k", team_key="TEAM", label="forman", transport=transport
+    )
+    c.create(Ticket(identifier="", title="New thing", labels=["invented-by-a-model"]))
+
+    assert transport.calls[-1][1]["input"]["labelIds"] == ["uuid-label"]
+
+
+def test_no_label_configured_stamps_nothing():
+    transport = FakeTransport(
+        [team_response([], [FORMAN_LABEL_NODE]), VIEWER, create_response()]
+    )
+    c = GraphQLLinearClient(api_key="k", team_key="TEAM", transport=transport)
+    c.create(Ticket(identifier="", title="New thing"))
+
+    assert "labelIds" not in transport.calls[-1][1]["input"]
 
 
 # -- identity ----------------------------------------------------------------

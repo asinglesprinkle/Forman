@@ -18,7 +18,10 @@ from pathlib import Path
 from . import git_ops
 from .config import (
     API_KEY_VAR,
+    DEFAULT_LABEL,
     ENV_FILE,
+    LABEL_VAR,
+    PROGRESS_STATE_VAR,
     REVIEW_STATE_VAR,
     TEAM_KEY_VAR,
     USER_VAR,
@@ -95,25 +98,32 @@ def resolve_repo(path: str | Path | None) -> Path:
     return git_ops.repo_root(start)
 
 
-def build_linear(repo: Path, backend: str) -> LinearClient:
+def build_linear(repo: Path, backend: str, label: str | None = None) -> LinearClient:
     """Pick a Linear backend.
 
     `graphql` is the default and talks to the real API with a personal key.
     `stub` is offline, backed by a JSON file, and needs no account.
+
+    `label` is the provenance mark stamped on everything created. Both backends
+    take it, so a stub run and a real one file the same shape of ticket.
     """
     if backend == "stub":
-        return StubLinearClient(path=stub_path(repo))
+        return StubLinearClient(path=stub_path(repo), label=label)
 
     settings = load_settings(repo)
     return GraphQLLinearClient(
         api_key=settings.require_api_key(repo),
         team_key=settings.team_key,
         review_state=settings.review_state,
+        progress_state=settings.progress_state,
         user=settings.user,
+        label=label,
     )
 
 
-def build_deps(repo: Path, linear: LinearClient, progress=None) -> Deps:
+def build_deps(
+    repo: Path, linear: LinearClient, progress=None, label: str | None = None
+) -> Deps:
     store = StateStore(repo)
 
     def decompose(ticket: Ticket) -> list[SubTask]:
@@ -162,6 +172,7 @@ def build_deps(repo: Path, linear: LinearClient, progress=None) -> Deps:
         git=GitAdapter(repo),
         decompose=decompose,
         spawn=spawn,
+        label=label,
     )
 
 
@@ -173,10 +184,17 @@ def cmd_pull(args: argparse.Namespace) -> int:
     git_ops.ensure_ignored(repo)
     git_ops.ensure_ignored(repo, ".env")
 
+    # The mark is always stamped on creation; `--any` only stops it being
+    # required on the way back in. Turning the stamp off too would mean a run
+    # started with --any files work that a later default run cannot see.
+    label = load_settings(repo).label
+    filter_by = None if args.any else label
+
     try:
-        linear = build_linear(repo, args.linear)
+        linear = build_linear(repo, args.linear, label=label)
         report = run_once(
-            build_deps(repo, linear, progress=for_terminal()), ticket_id=args.ticket
+            build_deps(repo, linear, progress=for_terminal(), label=filter_by),
+            ticket_id=args.ticket,
         )
     except MissingApiKey as exc:
         print(str(exc), file=sys.stderr)
@@ -266,7 +284,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     progress = for_terminal() if interactive else None
 
     try:
-        linear = build_linear(repo, args.linear)
+        linear = build_linear(repo, args.linear, label=load_settings(repo).label)
         if interactive:
             if progress:
                 progress.start("reading the repository and drafting")
@@ -396,6 +414,17 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     client.team_key = team_key
     try:
+        state = client.find_state(team_key, "in_progress")
+        print(f"Working state: tickets move to '{state['name']}' while Forman runs.")
+    except LinearApiError:
+        print(
+            f"Team {team_key} has no state that looks like 'in progress'. Forman\n"
+            "still works the ticket; it just cannot show that on the board.\n"
+            f"Set {PROGRESS_STATE_VAR} to an existing state name to fix that."
+        )
+    print()
+
+    try:
         state = client.find_state(team_key, "in_review")
         print(f"Gate state: tickets will move to '{state['name']}' when a PR opens.\n")
     except LinearApiError:
@@ -417,6 +446,15 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     if existing.user:
         values[USER_VAR] = existing.user
+    if existing.label != DEFAULT_LABEL:
+        values[LABEL_VAR] = existing.label
+
+    print(
+        f"Provenance: `forman push` labels what it creates '{existing.label}', and\n"
+        "`forman pull` only works tickets carrying it. Someone else filling your\n"
+        "backlog will not start a run. Add the label by hand to opt a ticket in,\n"
+        f"or override the name with {LABEL_VAR}.\n"
+    )
 
     written = write_user_env(values, target)
     print(f"Wrote {written} (permissions 0600)\n")
@@ -440,7 +478,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             api_key=settings.require_api_key(repo),
             team_key=settings.team_key,
             review_state=settings.review_state,
+            progress_state=settings.progress_state,
             user=settings.user,
+            label=settings.label,
         )
         info = client.check()
     except MissingApiKey as exc:
@@ -457,29 +497,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"teams visible:    {', '.join(info['teams']) or '(none)'}")
     print(f"team in use:      {info['team_key'] or '(set LINEAR_TEAM_KEY)'}")
     print(f"workflow states:  {', '.join(info['states']) or '(unknown)'}")
+    print(f"pull filter:      label '{info['label']}'  (set with {LABEL_VAR})")
 
-    try:
-        review = (
-            client.find_state(info["team_key"], "in_review")
-            if info["team_key"]
-            else None
-        )
-        print(
-            f"in-review state:  {review['name']}"
-            if review
-            else "in-review state:  (unknown)"
-        )
-    except LinearApiError as exc:
-        print(f"in-review state:  NOT FOUND. {exc}")
+    for wanted, caption in (("in_progress", "in-progress"), ("in_review", "in-review")):
+        try:
+            state = (
+                client.find_state(info["team_key"], wanted)
+                if info["team_key"]
+                else None
+            )
+            name = state["name"] if state else "(unknown)"
+            print(f"{caption + ' state:':18}{name}")
+        except LinearApiError as exc:
+            print(f"{caption + ' state:':18}NOT FOUND. {exc}")
 
     print(f"\nassigned to you ({len(info['assigned'])} shown):")
     for ticket in info["assigned"]:
         blockers = f"  blocked_by={ticket.blocked_by}" if ticket.blocked_by else ""
+        # The leading mark is the answer to "why did forman pull skip this?"
+        mark = "*" if ticket.identifier in info["labelled"] else " "
         print(
-            f"  {ticket.identifier}  [{ticket.status}/{ticket.priority}]  {ticket.title}{blockers}"
+            f" {mark}{ticket.identifier}  [{ticket.status}/{ticket.priority}]  "
+            f"{ticket.title}{blockers}"
         )
     if not info["assigned"]:
         print("  (nothing assigned, or nothing open)")
+    elif info["label"]:
+        print(f"\n  * carries '{info['label']}' — these are what `forman pull` works.")
+        print("    Anything unmarked needs the label, --ticket, or --any.")
     return 0
 
 
@@ -576,7 +621,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="ID",
         help="work this exact ticket (e.g. TEAM-42) instead of letting Forman "
-        "choose. Skips the readiness checks.",
+        "choose. Skips the readiness checks and the label filter.",
+    )
+    p_pull.add_argument(
+        "--any",
+        action="store_true",
+        help="consider every assigned ticket, not just the ones Forman created. "
+        "By default it only works tickets carrying the FORMAN_LABEL label "
+        f"(default '{DEFAULT_LABEL}'), so a backlog someone else filled while "
+        "you were running does not get picked up on its own.",
     )
     p_pull.set_defaults(func=cmd_pull)
 

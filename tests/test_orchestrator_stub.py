@@ -115,7 +115,9 @@ def canned_spawn(results: dict[str, SpawnResult], seen: list[str] | None = None)
     return _spawn
 
 
-def make_deps(tmp_path, goals, results=None, tickets=None, seen=None, git=None):
+def make_deps(
+    tmp_path, goals, results=None, tickets=None, seen=None, git=None, label=None
+):
     store = StateStore(tmp_path)
     linear = StubLinearClient(
         tickets
@@ -129,6 +131,7 @@ def make_deps(tmp_path, goals, results=None, tickets=None, seen=None, git=None):
         decompose=canned_decompose(store, goals),
         spawn=canned_spawn(results or {}, seen),
         now=lambda: "2026-08-01T10:00:00+00:00",
+        label=label,
     )
     return deps, store, linear, git
 
@@ -162,7 +165,11 @@ def test_ticket_is_set_to_in_review_and_never_to_done(tmp_path):
     deps, _store, linear, _git = make_deps(tmp_path, TWO_STEP)
     run_once(deps)
 
-    assert linear.status_changes == [("TEAM-7", "in_review")]
+    # In-progress on the way in, in-review at the gate, and nothing after.
+    assert linear.status_changes == [
+        ("TEAM-7", "in_progress"),
+        ("TEAM-7", "in_review"),
+    ]
     assert linear.tickets["TEAM-7"].status == "in_review"
     # The gate: nothing in this pipeline may mark a ticket done.
     assert all(status != "done" for _, status in linear.status_changes)
@@ -262,7 +269,9 @@ def test_blocked_subtask_halts_the_run_before_the_gate(tmp_path):
     # The dependent never ran: blocking is terminal for this run, no retry pass.
     assert state.subtask("TEAM-7.02").status == SubTaskStatus.PENDING.value
 
-    assert linear.status_changes == []
+    # It went in-progress on the way in and stayed there: a halted ticket never
+    # reaches the gate, and is not walked back either.
+    assert linear.status_changes == [("TEAM-7", "in_progress")]
     assert "blocked" in linear.comments[0][1]
 
 
@@ -293,7 +302,7 @@ def test_failed_subtask_is_recorded_and_halts(tmp_path):
     assert state.subtask("TEAM-7.01").blocked_reason == (
         "agent hit its turn limit (after 2 attempts)"
     )
-    assert linear.status_changes == []
+    assert linear.status_changes == [("TEAM-7", "in_progress")]
 
 
 def test_no_commit_for_a_blocked_subtask(tmp_path):
@@ -479,7 +488,10 @@ def test_manual_pr_still_reaches_in_review_with_the_body_on_the_ticket(tmp_path)
 
     assert report.outcome == "in_review"
     assert report.pr_url is None
-    assert linear.status_changes == [("TEAM-7", "in_review")]
+    assert linear.status_changes == [
+        ("TEAM-7", "in_progress"),
+        ("TEAM-7", "in_review"),
+    ]
     assert "could not open the pull request" in linear.comments[0][1]
 
 

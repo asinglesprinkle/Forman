@@ -157,6 +157,15 @@ mutation FormanCreate($input: IssueCreateInput!) {
 }
 """
 
+_LABEL_CREATE_MUTATION = """
+mutation FormanCreateLabel($teamId: String!, $name: String!) {
+  issueLabelCreate(input: { teamId: $teamId, name: $name }) {
+    success
+    issueLabel { id name }
+  }
+}
+"""
+
 _RELATION_MUTATION = """
 mutation FormanRelate($issueId: String!, $relatedIssueId: String!) {
   issueRelationCreate(
@@ -306,10 +315,16 @@ class GraphQLLinearClient:
         url: str = API_URL,
         timeout: float = DEFAULT_TIMEOUT,
         transport: Transport | None = None,
+        progress_state: str | None = None,
+        label: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.team_key = team_key
         self.review_state = review_state
+        self.progress_state = progress_state
+        # The provenance mark stamped on everything `create` files. None means
+        # do not stamp, which is what the pre-label behaviour was.
+        self.label = label
         # Optional. Left unset, the API key IS the identity: Linear resolves
         # `viewer` server-side, which cannot drift the way a name can. Set it
         # only to act as someone else, e.g. a shared key filing work for a
@@ -434,6 +449,20 @@ class GraphQLLinearClient:
     def teams(self) -> list[dict[str, Any]]:
         return paginate(self.query, _TEAMS_QUERY, "teams")
 
+    def _override_for(self, wanted: str) -> tuple[str | None, str]:
+        """The configured state name for `wanted`, and the var that sets it.
+
+        Scoped to the one state it names. An override used to apply to every
+        lookup, which was harmless while `in_review` was the only state the
+        pipeline ever set; now that a run also moves the ticket to in-progress
+        on the way in, an unscoped override would send that move to the review
+        column too.
+        """
+        return {
+            "in review": (self.review_state, "LINEAR_REVIEW_STATE"),
+            "in progress": (self.progress_state, "LINEAR_PROGRESS_STATE"),
+        }.get(wanted.replace("_", " ").strip().lower(), (None, "LINEAR_REVIEW_STATE"))
+
     def find_state(self, team_key: str, wanted: str) -> dict[str, Any]:
         """Find the workflow state to move an issue into.
 
@@ -443,7 +472,8 @@ class GraphQLLinearClient:
         here moves someone's ticket to the wrong column.
         """
         states = self.team(team_key)["states"]["nodes"]
-        target = (self.review_state or wanted).replace("_", " ").strip().lower()
+        override, var = self._override_for(wanted)
+        target = (override or wanted).replace("_", " ").strip().lower()
 
         for state in states:
             if state["name"].strip().lower() == target:
@@ -455,11 +485,69 @@ class GraphQLLinearClient:
             for state in states:
                 if "review" in state["name"].strip().lower():
                     return state
+        elif "progress" in target:
+            # Teams call this Doing, WIP, Started, Active. The name is a
+            # coin flip but Linear's own grouping is not: `started` is the
+            # in-flight group. Review states share that type, so they are
+            # excluded by name, and position order picks the leftmost
+            # in-flight column rather than whichever came back first.
+            started = sorted(
+                (
+                    s
+                    for s in states
+                    if (s.get("type") or "").lower() == "started"
+                    and "review" not in s["name"].strip().lower()
+                ),
+                key=lambda s: s.get("position") or 0,
+            )
+            if started:
+                return started[0]
         available = ", ".join(s["name"] for s in states)
         raise LinearApiError(
             f"no workflow state on team {team_key} matching {target!r}. "
-            f"Available: {available}. Set LINEAR_REVIEW_STATE to the exact name."
+            f"Available: {available}. Set {var} to the exact name."
         )
+
+    def label_ids(self, team_key: str, names: list[str]) -> list[str]:
+        """Resolve label names to ids, dropping any this team does not have.
+
+        Dropping is deliberate: a drafting agent inventing "tech-debt" should
+        not conjure a new label into someone's workspace. The provenance label
+        is the one exception, and it goes through ensure_label instead.
+        """
+        by_name = {
+            label["name"].strip().lower(): label["id"]
+            for label in (self.team(team_key).get("labels") or {}).get("nodes", [])
+        }
+        wanted = [n.strip().lower() for n in names]
+        return [by_name[n] for n in wanted if n in by_name]
+
+    def ensure_label(self, team_key: str, name: str) -> str:
+        """The id of `name` on this team, creating the label if it is missing.
+
+        Created rather than dropped because the pull filter is keyed on exactly
+        this label: silently omitting it would file a ticket that Forman can
+        never pick back up.
+        """
+        found = self.label_ids(team_key, [name])
+        if found:
+            return found[0]
+
+        team = self.team(team_key)
+        result = self.query(_LABEL_CREATE_MUTATION, teamId=team["id"], name=name)[
+            "issueLabelCreate"
+        ]
+        if not result["success"]:
+            raise LinearApiError(f"Linear refused to create the label {name!r}")
+
+        created = result["issueLabel"]
+        # Keep the cached team in step, so a second create in the same run does
+        # not ask again and collide with Linear's duplicate-name rule.
+        labels = team.setdefault("labels", {})
+        labels.setdefault("nodes", []).append(
+            {"id": created["id"], "name": created["name"]}
+        )
+        return created["id"]
 
     def default_team_key(self) -> str:
         if self.team_key:
@@ -560,18 +648,17 @@ class GraphQLLinearClient:
             # Linear estimates are numeric points and only accepted when the
             # team has estimates enabled. A t-shirt size is dropped on purpose.
             payload["estimate"] = int(ticket.estimate)
-        if ticket.labels:
-            by_name = {
-                label["name"].lower(): label["id"]
-                for label in team.get("labels", {}).get("nodes", [])
-            }
-            ids = [
-                by_name[name.lower()]
-                for name in ticket.labels
-                if name.lower() in by_name
-            ]
-            if ids:
-                payload["labelIds"] = ids
+        label_ids = self.label_ids(team_key, ticket.labels)
+        if self.label:
+            # The provenance mark. Without it on the way out, the pull phase
+            # will not recognise this ticket as its own on the way back in.
+            provenance = self.ensure_label(team_key, self.label)
+            if provenance not in label_ids:
+                label_ids.append(provenance)
+            if not ticket.has_label(self.label):
+                ticket.labels.append(self.label)
+        if label_ids:
+            payload["labelIds"] = label_ids
         if ticket.project:
             for project in paginate(self.query, _PROJECTS_QUERY, "projects"):
                 if project["name"].lower() == ticket.project.lower():
@@ -625,6 +712,10 @@ class GraphQLLinearClient:
         if team_key:
             states = [s["name"] for s in self.team(team_key)["states"]["nodes"]]
         return {
+            "label": self.label,
+            "labelled": [
+                t.identifier for t in issues if self.label and t.has_label(self.label)
+            ],
             "viewer": viewer.get("email") or viewer.get("name"),
             "actor": actor.get("displayName")
             or actor.get("name")

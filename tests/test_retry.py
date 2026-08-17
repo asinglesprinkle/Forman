@@ -93,7 +93,7 @@ def test_two_failures_give_up_and_say_how_many_attempts(tmp_path):
     failed = store.load("TEAM-7").subtask("TEAM-7.01")
     assert failed.status == SubTaskStatus.FAILED.value
     assert "after 2 attempts" in failed.blocked_reason
-    assert linear.status_changes == []
+    assert linear.status_changes == [("TEAM-7", "in_progress")]
 
 
 def test_a_blocked_subtask_is_never_retried(tmp_path):

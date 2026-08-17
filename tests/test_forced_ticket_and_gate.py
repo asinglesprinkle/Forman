@@ -75,7 +75,26 @@ def test_missing_review_state_does_not_fail_a_finished_run(tmp_path):
     assert store.load("TEAM-7").status == TicketStatus.IN_REVIEW.value
     assert any("Pull request opened" in body for _, body in deps.linear.comments)
 
-    # And the failure is surfaced rather than swallowed.
-    assert report.notes
-    assert "in-review" in report.notes[0]
-    assert "Available: In Progress" in report.notes[0]
+    # And the failure is surfaced rather than swallowed. This board also has no
+    # state the in-progress move can find, so both are reported.
+    notes = "\n".join(report.notes)
+    assert "in-review" in notes
+    assert "in-progress" in notes
+    assert "Available: In Progress" in notes
+
+
+def test_missing_in_progress_state_does_not_stop_the_run(tmp_path):
+    """The board move is a courtesy to onlookers, not a precondition."""
+    deps, store, _linear, git = make_deps(tmp_path, TWO_STEP)
+    deps.linear = NoReviewStateLinear(
+        [Ticket(identifier="TEAM-7", title="Add rate limiting to the auth endpoint")]
+    )
+
+    report = run_once(deps)
+
+    # Every sub-task ran and the PR opened, despite the very first Linear write
+    # of the run blowing up.
+    assert report.outcome == "in_review"
+    assert store.load("TEAM-7").all_done()
+    assert git.commits
+    assert any("in-progress" in note for note in report.notes)

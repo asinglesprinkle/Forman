@@ -25,7 +25,17 @@ ENV_FILE = ".env"
 API_KEY_VAR = "LINEAR_API_KEY"
 TEAM_KEY_VAR = "LINEAR_TEAM_KEY"
 REVIEW_STATE_VAR = "LINEAR_REVIEW_STATE"
+PROGRESS_STATE_VAR = "LINEAR_PROGRESS_STATE"
 USER_VAR = "LINEAR_USER"
+LABEL_VAR = "FORMAN_LABEL"
+
+# The provenance mark. `forman push` puts this label on everything it creates,
+# and `forman pull` will only work tickets that carry it. Not a security
+# boundary and not meant to be one: it exists so that twenty tickets a project
+# manager filed on you while you were mid-run do not silently become the next
+# thing an agent starts writing code against. Anyone can add the label by hand
+# to opt a ticket in, and `--any` ignores it entirely for one run.
+DEFAULT_LABEL = "forman"
 
 
 class MissingApiKey(RuntimeError):
@@ -95,7 +105,14 @@ def load_env(repo_root: str | Path | None = None) -> dict[str, str]:
     return values
 
 
-_KNOWN_VARS = {API_KEY_VAR, TEAM_KEY_VAR, REVIEW_STATE_VAR, USER_VAR}
+_KNOWN_VARS = {
+    API_KEY_VAR,
+    TEAM_KEY_VAR,
+    REVIEW_STATE_VAR,
+    PROGRESS_STATE_VAR,
+    USER_VAR,
+    LABEL_VAR,
+}
 
 
 @dataclass
@@ -103,7 +120,12 @@ class Settings:
     api_key: str | None = None
     team_key: str | None = None
     review_state: str | None = None
+    progress_state: str | None = None
     user: str | None = None
+    # Never None in practice: an empty FORMAN_LABEL falls back to the default
+    # rather than turning the filter off, because "off" is `--any`, which is a
+    # per-run decision and not something a stale .env should make for you.
+    label: str = DEFAULT_LABEL
 
     def require_api_key(self, repo_root: str | Path | None = None) -> str:
         if not self.api_key:
@@ -125,7 +147,14 @@ def render_env(values: dict[str, str]) -> str:
         "# Docs: https://linear.app/settings/api for the API key.",
         "",
     ]
-    for var in (API_KEY_VAR, TEAM_KEY_VAR, REVIEW_STATE_VAR, USER_VAR):
+    for var in (
+        API_KEY_VAR,
+        TEAM_KEY_VAR,
+        REVIEW_STATE_VAR,
+        PROGRESS_STATE_VAR,
+        USER_VAR,
+        LABEL_VAR,
+    ):
         value = values.get(var)
         if value:
             lines.append(f"{var}={value}")
@@ -151,5 +180,7 @@ def load_settings(repo_root: str | Path | None = None) -> Settings:
         api_key=values.get(API_KEY_VAR) or None,
         team_key=values.get(TEAM_KEY_VAR) or None,
         review_state=values.get(REVIEW_STATE_VAR) or None,
+        progress_state=values.get(PROGRESS_STATE_VAR) or None,
         user=values.get(USER_VAR) or None,
+        label=(values.get(LABEL_VAR) or "").strip() or DEFAULT_LABEL,
     )
