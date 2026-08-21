@@ -37,7 +37,7 @@ from .linear_graphql import GraphQLLinearClient, LinearApiError
 from .models import CommitResult, PullRequest, SpawnResult, SubTask, Ticket
 from .orchestrator import Deps, run_once
 from .progress import ask_after_agent, for_terminal
-from .spawn import spawn_agent
+from .spawn import DEFAULT_MAX_TURNS, spawn_agent
 from .state import StateStore, format_cost
 
 # Imported for its import side effect, not for anything it exports: this is what
@@ -145,11 +145,13 @@ def build_deps(
         siblings: list[tuple[str, str]],
         attempt: int = 1,
         previous_error: str | None = None,
+        max_turns: int | None = None,
     ) -> SpawnResult:
         # The longest silence in the whole pipeline: this one edits, runs the
         # tests and commits, and until now said nothing until it was done.
+        turns = max_turns or DEFAULT_MAX_TURNS
         if progress:
-            retry = f" (attempt {attempt})" if attempt > 1 else ""
+            retry = f" (attempt {attempt}, {turns} turns)" if attempt > 1 else ""
             progress.start(f"{subtask.id}: {subtask.goal}{retry}")
         try:
             return spawn_agent(
@@ -160,6 +162,7 @@ def build_deps(
                 cwd=repo,
                 attempt=attempt,
                 previous_error=previous_error,
+                max_turns=turns,
                 on_activity=progress,
             )
         finally:

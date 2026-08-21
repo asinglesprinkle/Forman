@@ -127,6 +127,58 @@ def test_turn_limit_is_failed():
     result = result_from_run(AgentRun(text='{"status": "done"}', turn_limit_hit=True))
     assert result.status == SubTaskStatus.FAILED.value
     assert "turn limit" in result.error
+    assert result.turn_limit_hit
+
+
+# -- a turn limit, as the SDK actually delivers one --------------------------
+#
+# The CLI emits the result message and THEN exits non-zero on purpose, so the
+# SDK raises a bare Exception carrying the same sentence and the runner records
+# it as an error. Every real turn limit arrives with both fields set, which is
+# why these tests carry both.
+
+_RAISED = (
+    "Exception: Claude Code returned an error result: "
+    "Reached maximum number of turns (40)"
+)
+
+
+def test_a_real_turn_limit_reads_as_a_turn_limit_not_as_raw_sdk_text():
+    result = result_from_run(AgentRun(error=_RAISED, turn_limit_hit=True))
+    assert result.status == SubTaskStatus.FAILED.value
+    assert result.turn_limit_hit
+    assert "turn limit" in result.error
+    assert "Exception" not in result.error
+
+
+def test_a_turn_limit_is_recognized_from_the_text_alone():
+    # The flag comes from the result message. If that never arrived, the
+    # sentence the SDK raised is still the session saying what happened.
+    result = result_from_run(AgentRun(error=_RAISED))
+    assert result.turn_limit_hit
+    assert result.retryable
+
+
+def test_the_turn_limit_error_names_the_budget_that_ran_out():
+    result = result_from_run(AgentRun(turn_limit_hit=True), max_turns=40)
+    assert "40-turn" in result.error
+
+
+def test_a_turn_limit_is_always_retryable_however_it_is_worded():
+    # "limit reached" is a permanent-failure marker, and a turn limit worded
+    # that way would fall through to the text matching and be filed as
+    # permanent - the one failure most worth retrying, never retried.
+    result = result_from_run(
+        AgentRun(error="turn limit reached: max_turns", turn_limit_hit=True)
+    )
+    assert result.retryable
+
+
+def test_a_usage_limit_is_still_permanent():
+    result = result_from_run(AgentRun(error="usage limit exceeded"))
+    assert result.status == SubTaskStatus.FAILED.value
+    assert not result.retryable
+    assert not result.turn_limit_hit
 
 
 def test_missing_json_is_failed_and_keeps_the_raw_text():

@@ -8,8 +8,8 @@ so retrying it just burns tokens to get the same answer.
 from test_orchestrator_stub import TWO_STEP, make_deps
 
 from forman.models import SpawnResult, SubTaskStatus, Ticket
-from forman.orchestrator import run_once
-from forman.spawn import build_subtask_prompt
+from forman.orchestrator import TURN_LIMIT_RETRY_FACTOR, run_once
+from forman.spawn import DEFAULT_MAX_TURNS, build_subtask_prompt
 
 
 class RecordingSpawn:
@@ -19,13 +19,24 @@ class RecordingSpawn:
         self.per_attempt = per_attempt
         self.calls: list[dict] = []
 
-    def __call__(self, *, ticket, subtask, readme, siblings, attempt, previous_error):
+    def __call__(
+        self,
+        *,
+        ticket,
+        subtask,
+        readme,
+        siblings,
+        attempt,
+        previous_error,
+        max_turns=None,
+    ):
         self.calls.append(
             {
                 "id": subtask.id,
                 "attempt": attempt,
                 "previous_error": previous_error,
                 "readme": readme,
+                "max_turns": max_turns,
             }
         )
         canned = self.per_attempt.get(subtask.id)
@@ -133,6 +144,53 @@ def test_retries_can_be_turned_off(tmp_path):
     assert [c["attempt"] for c in spawn.calls if c["id"] == "TEAM-7.01"] == [1]
     # With retries off the error is reported bare, with no attempt count.
     assert store.load("TEAM-7").subtask("TEAM-7.01").blocked_reason == "turn limit hit"
+
+
+# -- what the retry is given to work with ------------------------------------
+
+
+def _turn_limit(error="agent hit its 40-turn limit before finishing"):
+    return SpawnResult(status="failed", error=error, turn_limit_hit=True)
+
+
+def test_a_turn_limit_retry_gets_a_bigger_budget(tmp_path):
+    spawn = RecordingSpawn({"TEAM-7.01": [_turn_limit()]})
+    deps, *_ = make_deps(tmp_path, TWO_STEP)
+    deps.spawn = spawn
+
+    run_once(deps)
+
+    first, second = [c for c in spawn.calls if c["id"] == "TEAM-7.01"][:2]
+    # Attempt one asks for nothing: the spawn's own default is the budget.
+    assert first["max_turns"] is None
+    assert second["max_turns"] == DEFAULT_MAX_TURNS * TURN_LIMIT_RETRY_FACTOR
+
+
+def test_a_retry_for_any_other_reason_keeps_the_default_budget(tmp_path):
+    spawn = RecordingSpawn(
+        {"TEAM-7.01": [SpawnResult(status="failed", error="ConnectionError: dropped")]}
+    )
+    deps, *_ = make_deps(tmp_path, TWO_STEP)
+    deps.spawn = spawn
+
+    run_once(deps)
+
+    calls = [c for c in spawn.calls if c["id"] == "TEAM-7.01"]
+    assert [c["max_turns"] for c in calls] == [None, None]
+
+
+def test_the_log_says_the_retry_was_given_more_turns(tmp_path):
+    spawn = RecordingSpawn({"TEAM-7.01": [_turn_limit()]})
+    deps, *_ = make_deps(tmp_path, TWO_STEP)
+    deps.spawn = spawn
+
+    run_once(deps)
+
+    second = [c for c in spawn.calls if c["id"] == "TEAM-7.01"][1]
+    assert (
+        f"Retry gets {DEFAULT_MAX_TURNS * TURN_LIMIT_RETRY_FACTOR} turns"
+        in (second["readme"])
+    )
 
 
 # -- what the retry actually tells the agent ---------------------------------

@@ -470,12 +470,42 @@ _PERMANENT_FAILURE_MARKERS = (
 )
 
 
+# How a turn limit describes itself. The CLI reports one twice: first as a
+# result message with subtype `error_max_turns`, then by exiting non-zero on
+# purpose, which the SDK re-raises as a bare `Exception` carrying this sentence.
+# Matching the text as well as the flag means a session whose result message
+# never arrived is still read as what it was.
+_TURN_LIMIT_MARKERS = (
+    "maximum number of turns",
+    "error_max_turns",
+    "max_turns",
+)
+
+
+def names_turn_limit(error: str | None) -> bool:
+    """Whether an error text is a turn limit describing itself."""
+    if not error:
+        return False
+    lowered = error.lower()
+    return any(marker in lowered for marker in _TURN_LIMIT_MARKERS)
+
+
+def hit_turn_limit(run: AgentRun) -> bool:
+    """Whether a session ran out of turns, however it said so."""
+    return run.turn_limit_hit or names_turn_limit(run.error)
+
+
 def is_retryable(error: str | None) -> bool:
     """Whether trying the exact same thing again could plausibly work.
 
     Pattern matching on error text is crude, and it only catches failures that
     describe themselves. An SDK error that says nothing useful still gets a
     retry, which is the safe direction to be wrong in.
+
+    Turn limits never reach here: `result_from_run` settles those on the flag
+    before any text is read. That ordering matters, because "limit reached"
+    below would otherwise match a turn limit worded slightly differently and
+    file the most retryable failure there is as a permanent one.
     """
     if not error:
         return True
@@ -483,7 +513,7 @@ def is_retryable(error: str | None) -> bool:
     return not any(marker in lowered for marker in _PERMANENT_FAILURE_MARKERS)
 
 
-def result_from_run(run: AgentRun) -> SpawnResult:
+def result_from_run(run: AgentRun, *, max_turns: int | None = None) -> SpawnResult:
     """Turn a raw session into a pipeline outcome.
 
     An SDK error or a turn-limit hit is `failed`, which the orchestrator will
@@ -497,17 +527,27 @@ def result_from_run(run: AgentRun) -> SpawnResult:
         "total_cost_usd": run.total_cost_usd,
         "raw": run.text or None,
     }
+    # Read before `run.error`, and that order is the whole point. The CLI
+    # reports the turn limit and then exits non-zero deliberately, so the SDK
+    # raises on the way out and the blind catch in the runner records that
+    # exception. The exception is the exit, not the reason. Taking it first
+    # filed every real turn limit under raw SDK text and left the retry
+    # decision to string matching, which is how this branch became unreachable
+    # outside its own unit test.
+    if hit_turn_limit(run):
+        limit = f" {max_turns}-turn" if max_turns else " turn"
+        return SpawnResult(
+            status=SubTaskStatus.FAILED.value,
+            error=f"agent hit its{limit} limit before finishing",
+            turn_limit_hit=True,
+            retryable=True,
+            **meta,
+        )
     if run.error:
         return SpawnResult(
             status=SubTaskStatus.FAILED.value,
             error=run.error,
             retryable=is_retryable(run.error),
-            **meta,
-        )
-    if run.turn_limit_hit:
-        return SpawnResult(
-            status=SubTaskStatus.FAILED.value,
-            error="agent hit its turn limit before finishing",
             **meta,
         )
 
@@ -583,4 +623,4 @@ def spawn_agent(
         model=model,
         on_activity=on_activity,
     )
-    return result_from_run(run)
+    return result_from_run(run, max_turns=max_turns)

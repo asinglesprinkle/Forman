@@ -162,6 +162,10 @@ class SpawnResult:
     # or a bad credential is not transient the way a dropped connection is, so
     # retrying it immediately just burns the second attempt for nothing.
     retryable: bool = True
+    # The session ran out of turns. Retryable like any other failure, but the
+    # only one where the retry starts from work already in the tree, so the
+    # orchestrator gives it a bigger budget instead of the same one again.
+    turn_limit_hit: bool = False
 
     @property
     def ok(self) -> bool:

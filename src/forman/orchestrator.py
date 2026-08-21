@@ -29,6 +29,7 @@ from .models import (
     TicketStatus,
     iso_now,
 )
+from .spawn import DEFAULT_MAX_TURNS
 from .state import StateStore, next_ready_subtask, total_cost_usd
 from .topo import ready_nodes
 
@@ -39,6 +40,14 @@ _PRIORITY_RANK = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
 # halting a whole ticket over one is needless. `blocked` is never retried,
 # because the answer will not change until a human does something.
 SPAWN_ATTEMPTS = 2
+
+# What a turn-limit retry gets instead of the default budget. The retry does not
+# resume where the first attempt stopped - it is a fresh session, and it opens by
+# reading the tree the first attempt left behind, which costs turns before it can
+# write anything. Handing it the same number as the attempt that already ran out
+# hands it strictly less working room, and the retry then dies the same way. Only
+# turn limits get this; nothing else is short of turns.
+TURN_LIMIT_RETRY_FACTOR = 2
 
 
 # -- ports -------------------------------------------------------------------
@@ -75,6 +84,7 @@ class SpawnPort(Protocol):
         siblings: list[tuple[str, str]],
         attempt: int,
         previous_error: str | None,
+        max_turns: int | None,
     ) -> SpawnResult: ...
 
 
@@ -423,14 +433,17 @@ def _spawn_with_retry(
     The working tree is deliberately NOT reset between attempts. A turn-limit
     failure usually means most of the work is already correct, so finishing it
     beats throwing it away; the retry is told it is a retry so it does not
-    duplicate edits. Anything already committed belongs to a sub-task that
-    finished, so nothing at risk here was ever verified.
+    duplicate edits, and it is given a larger turn budget so it can actually
+    finish. Anything already committed belongs to a sub-task that finished, so
+    nothing at risk here was ever verified.
     """
     readme = deps.store.read_subtask_readme(ticket.identifier, subtask.id)
     siblings = [(st.id, st.log or "") for st in state.subtasks if st.is_done()]
     total = max(1, deps.attempts)
     result = SpawnResult(status=SubTaskStatus.FAILED.value, error="spawn never ran")
     last_error: str | None = None
+    # None means the spawn's own default. Only a turn limit changes it.
+    budget: int | None = None
 
     for attempt in range(1, total + 1):
         result = deps.spawn(
@@ -440,6 +453,7 @@ def _spawn_with_retry(
             siblings=siblings,
             attempt=attempt,
             previous_error=last_error,
+            max_turns=budget,
         )
         if result.status != SubTaskStatus.FAILED.value:
             return result
@@ -449,12 +463,15 @@ def _spawn_with_retry(
             return result
 
         last_error = result.error
+        if result.turn_limit_hit:
+            budget = (budget or DEFAULT_MAX_TURNS) * TURN_LIMIT_RETRY_FACTOR
         if attempt < total:
+            raised = f" Retry gets {budget} turns." if result.turn_limit_hit else ""
             deps.store.append_execution_log(
                 ticket.identifier,
                 subtask.id,
                 f"[forman] attempt {attempt} of {total} failed: {result.error}. "
-                "Retrying once in the same working tree.",
+                f"Retrying once in the same working tree.{raised}",
             )
             # Re-read: the failed attempt may have appended to the log itself,
             # and the retry should see whatever it left behind.

@@ -104,7 +104,16 @@ def canned_spawn(results: dict[str, SpawnResult], seen: list[str] | None = None)
     the retry tests express "fails, then succeeds".
     """
 
-    def _spawn(*, ticket, subtask, readme, siblings, attempt=1, previous_error=None):
+    def _spawn(
+        *,
+        ticket,
+        subtask,
+        readme,
+        siblings,
+        attempt=1,
+        previous_error=None,
+        max_turns=None,
+    ):
         if seen is not None:
             seen.append(subtask.id)
         canned = results.get(subtask.id)
